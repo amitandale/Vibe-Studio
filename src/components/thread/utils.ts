@@ -8,8 +8,32 @@ import type { Message } from "@langchain/langgraph-sdk";
  */
 export function getContentString(content: Message["content"]): string {
   if (typeof content === "string") return content;
-  const texts = content
+  if (!Array.isArray(content) || content.length === 0) {
+    return "Multimodal message";
+  }
+
+  const textBlocks = content
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
-    .map((c) => c.text);
-  return texts.join(" ");
+    .map((c) => c.text.trim())
+    .filter((text) => text.length > 0);
+
+  if (textBlocks.length > 0) {
+    return textBlocks.join(" ");
+  }
+
+  const firstNonText = content.find((c) => c.type !== "text");
+  if (firstNonText && typeof firstNonText === "object") {
+    const typeValue = (firstNonText as { type?: unknown }).type;
+    if (typeof typeValue === "string") {
+      const labels: Record<string, string> = {
+        image: "Image",
+        file: "File",
+        audio: "Audio",
+        video: "Video",
+      };
+      return labels[typeValue] ?? "Other";
+    }
+  }
+
+  return "Multimodal message";
 }
