@@ -7,6 +7,7 @@ import {
   prettifyText,
 } from "@/components/thread/agent-inbox/utils";
 import type { HumanResponseWithEdits } from "@/components/thread/agent-inbox/types";
+import type { ActionRequest } from "@langchain/langgraph/prebuilt";
 
 describe("agent inbox utils", () => {
   it("converts snake_case strings into start case", () => {
@@ -42,7 +43,10 @@ describe("agent inbox utils", () => {
 
   it("detects when a submit type is present", () => {
     const responses: HumanResponseWithEdits[] = [
-      { type: "edit", args: { value: "foo" } },
+      {
+        type: "edit",
+        args: { action: "edit", payload: { value: "foo" } } as unknown as ActionRequest,
+      },
       { type: "response", args: "bar" },
     ];
 

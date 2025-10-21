@@ -2,8 +2,6 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-import { toast } from "sonner";
-
 const originalFetch = globalThis.fetch;
 const originalCrypto = globalThis.crypto;
 
@@ -25,15 +23,6 @@ const createMemoryStorage = () => {
       return store.size;
     },
   } satisfies Storage;
-};
-
-const resetMockCalls = (fn: { mock?: { calls: unknown[][] }; calls?: unknown[][] }) => {
-  if (fn.mock) {
-    fn.mock.calls = [];
-  }
-  if (Array.isArray(fn.calls)) {
-    fn.calls = [];
-  }
 };
 
 const ensureLocalStorage = () => {
@@ -169,22 +158,6 @@ if (!originalFetch) {
 
 afterEach(() => {
   cleanup();
-  if ("mock" in toast) {
-    resetMockCalls(toast as unknown as ReturnType<typeof vi.fn>);
-  }
-  const toastMethods = [
-    "success",
-    "error",
-    "warning",
-    "info",
-    "message",
-  ] as const;
-  toastMethods.forEach((method) => {
-    const fn = toast[method];
-    if (fn && "mock" in fn) {
-      resetMockCalls(fn as ReturnType<typeof vi.fn>);
-    }
-  });
   globalThis.fetch = originalFetch ?? (async () => {
     throw new Error("fetch not implemented in tests");
   });

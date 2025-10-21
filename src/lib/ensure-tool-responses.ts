@@ -13,7 +13,12 @@ export function ensureToolCallsHaveResponses(
   messages.forEach((message, index) => {
     augmentedMessages.push(message);
 
-    if (message.type !== "ai" || message.tool_calls?.length === 0) {
+    if (message.type !== "ai") {
+      return;
+    }
+
+    const toolCalls = message.tool_calls ?? [];
+    if (toolCalls.length === 0) {
       return;
     }
 
@@ -22,7 +27,7 @@ export function ensureToolCallsHaveResponses(
       return;
     }
 
-    const syntheticMessages: ToolMessage[] = message.tool_calls.map((tc) => ({
+    const syntheticMessages: ToolMessage[] = toolCalls.map((tc) => ({
       type: "tool" as const,
       tool_call_id: tc.id ?? "",
       id: `${DO_NOT_RENDER_ID_PREFIX}${generateId()}`,

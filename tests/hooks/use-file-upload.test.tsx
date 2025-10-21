@@ -22,7 +22,7 @@ const toFileList = (files: File[]): FileList => {
 
 describe("useFileUpload", () => {
   beforeEach(() => {
-    toast.error.calls = [];
+    (toast.error as { calls?: unknown[][] }).calls = [];
   });
 
   it("accepts supported files while rejecting invalid ones", async () => {
@@ -54,7 +54,7 @@ describe("useFileUpload", () => {
 
     expect(transformFile.mock.calls.length).toBe(1);
     expect(transformFile.mock.calls[0][0]).toBe(validFile);
-    expect(toast.error.calls.length).toBe(1);
+    expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(1);
     expect(result.current.contentBlocks.length).toBe(1);
     expect(event.target.value).toBe("");
   });
@@ -85,10 +85,10 @@ describe("useFileUpload", () => {
     });
 
     expect(result.current.contentBlocks.length).toBe(1);
-    expect(toast.error.calls.length).toBe(0);
+    expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(0);
 
     transformFile.mock.calls = [];
-    toast.error.calls = [];
+    (toast.error as { calls?: unknown[][] }).calls = [];
 
     await act(async () => {
       await result.current.handleFileUpload({
@@ -100,7 +100,7 @@ describe("useFileUpload", () => {
     });
 
     expect(transformFile.mock.calls.length).toBe(0);
-    expect(toast.error.calls.length).toBe(1);
+    expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(1);
     expect(result.current.contentBlocks.length).toBe(1);
   });
 

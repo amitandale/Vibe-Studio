@@ -46,7 +46,11 @@ export function useRef<T>(initial: T): MutableRefObject<T> {
 }
 
 export function createElement(type: unknown, props: unknown, ...children: unknown[]) {
-  return { type, props: { ...props, children } };
+  const normalizedProps =
+    props && typeof props === "object"
+      ? { ...(props as Record<string, unknown>) }
+      : {};
+  return { type, props: { ...normalizedProps, children } };
 }
 
 const React = {

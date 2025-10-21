@@ -37,7 +37,7 @@ describe("isBase64ContentBlock", () => {
 
 describe("fileToContentBlock", () => {
   beforeEach(() => {
-    toast.error.calls = [];
+    (toast.error as { calls?: unknown[][] }).calls = [];
     globalThis.FileReader = FileReaderStub as unknown as typeof FileReader;
   });
 
@@ -88,6 +88,7 @@ describe("fileToContentBlock", () => {
       expect(caught.message.includes("Unsupported file type: text/plain"))
         .toBe(true);
     }
-    expect(toast.error.calls.length).toBe(1);
+    const calls = (toast.error as { calls?: unknown[][] }).calls ?? [];
+    expect(calls.length).toBe(1);
   });
 });
