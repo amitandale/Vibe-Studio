@@ -8,33 +8,6 @@ export function prettifyText(action: string) {
   return startCase(action.replace(/_/g, " "));
 }
 
-export function hasUserChangedArgs(
-  args: unknown,
-  initialValues: Record<string, string>,
-): boolean {
-  if (typeof args !== "object" || args === null) {
-    return false;
-  }
-
-  return Object.entries(args as Record<string, unknown>).some(
-    ([key, value]) => {
-      const normalizedValue =
-        typeof value === "string" || typeof value === "number"
-          ? value.toString()
-          : JSON.stringify(value, null);
-
-      return initialValues[key] !== normalizedValue;
-    },
-  );
-}
-
-export function hasSubmitType(
-  responses: HumanResponseWithEdits[],
-  submitType: SubmitType,
-): boolean {
-  return responses.some((response) => response.type === submitType);
-}
-
 export function isArrayOfMessages(
   value: Record<string, any>[],
 ): value is BaseMessage[] {
@@ -235,5 +208,16 @@ export function haveArgsChanged(
   args: unknown,
   initialValues: Record<string, string>,
 ): boolean {
-  return hasUserChangedArgs(args, initialValues);
+  if (typeof args !== "object" || !args) {
+    return false;
+  }
+
+  const currentValues = args as Record<string, string>;
+
+  return Object.entries(currentValues).some(([key, value]) => {
+    const valueString = ["string", "number"].includes(typeof value)
+      ? value.toString()
+      : JSON.stringify(value, null);
+    return initialValues[key] !== valueString;
+  });
 }

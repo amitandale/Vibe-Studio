@@ -13,12 +13,10 @@ export const SUPPORTED_FILE_TYPES = [
 
 interface UseFileUploadOptions {
   initialBlocks?: Base64ContentBlock[];
-  transformFile?: (file: File) => Promise<Base64ContentBlock>;
 }
 
 export function useFileUpload({
   initialBlocks = [],
-  transformFile = fileToContentBlock,
 }: UseFileUploadOptions = {}) {
   const [contentBlocks, setContentBlocks] =
     useState<Base64ContentBlock[]>(initialBlocks);
@@ -75,7 +73,7 @@ export function useFileUpload({
     }
 
     const newBlocks = uniqueFiles.length
-      ? await Promise.all(uniqueFiles.map(transformFile))
+      ? await Promise.all(uniqueFiles.map(fileToContentBlock))
       : [];
     setContentBlocks((prev) => [...prev, ...newBlocks]);
     e.target.value = "";
@@ -254,7 +252,7 @@ export function useFileUpload({
       );
     }
     if (uniqueFiles.length > 0) {
-      const newBlocks = await Promise.all(uniqueFiles.map(transformFile));
+      const newBlocks = await Promise.all(uniqueFiles.map(fileToContentBlock));
       setContentBlocks((prev) => [...prev, ...newBlocks]);
     }
   };

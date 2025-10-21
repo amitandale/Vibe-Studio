@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import type { ChangeEvent } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { toast } from "sonner";
@@ -26,17 +26,7 @@ describe("useFileUpload", () => {
   });
 
   it("accepts supported files while rejecting invalid ones", async () => {
-    const transformFile = vi.fn(async (file: File) => ({
-      type: "image" as const,
-      source_type: "base64" as const,
-      mime_type: file.type,
-      data: `${file.name}-data`,
-      metadata: { name: file.name },
-    }));
-
-    const { result } = renderHook(() =>
-      useFileUpload({ transformFile }),
-    );
+    const { result } = renderHook(() => useFileUpload());
     const validFile = new File(["content"], "photo.png", { type: "image/png" });
     const invalidFileA = new File(["content"], "notes.txt", { type: "text/plain" });
     const invalidFileB = new File(["content"], "audio.mp3", { type: "audio/mpeg" });
@@ -52,42 +42,33 @@ describe("useFileUpload", () => {
       await result.current.handleFileUpload(event);
     });
 
-    expect(transformFile.mock.calls.length).toBe(1);
-    expect(transformFile.mock.calls[0][0]).toBe(validFile);
     expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(1);
     expect(result.current.contentBlocks.length).toBe(1);
+    const block = result.current.contentBlocks[0];
+    expect(block.type).toBe("image");
+    expect((block as { mime_type?: string }).mime_type).toBe("image/png");
+    expect((block as { metadata?: { name?: string } }).metadata?.name).toBe(
+      "photo.png",
+    );
     expect(event.target.value).toBe("");
   });
 
   it("deduplicates files based on name, size, and type", async () => {
-    const transformFile = vi.fn(async (file: File) => ({
-      type: "image" as const,
-      source_type: "base64" as const,
-      mime_type: file.type,
-      data: `${file.name}-data`,
-      metadata: { name: file.name },
-    }));
-
-    const { result } = renderHook(() =>
-      useFileUpload({ transformFile }),
-    );
+    const { result } = renderHook(() => useFileUpload());
     const file = new File(["content"], "photo.png", { type: "image/png" });
 
-    const event = {
-      target: {
-        files: toFileList([file]),
-        value: "initial",
-      },
-    } as unknown as ChangeEvent<HTMLInputElement>;
-
     await act(async () => {
-      await result.current.handleFileUpload(event);
+      await result.current.handleFileUpload({
+        target: {
+          files: toFileList([file]),
+          value: "initial",
+        },
+      } as unknown as ChangeEvent<HTMLInputElement>);
     });
 
     expect(result.current.contentBlocks.length).toBe(1);
     expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(0);
 
-    transformFile.mock.calls = [];
     (toast.error as { calls?: unknown[][] }).calls = [];
 
     await act(async () => {
@@ -99,34 +80,12 @@ describe("useFileUpload", () => {
       } as unknown as ChangeEvent<HTMLInputElement>);
     });
 
-    expect(transformFile.mock.calls.length).toBe(0);
     expect(((toast.error as { calls?: unknown[][] }).calls ?? []).length).toBe(1);
     expect(result.current.contentBlocks.length).toBe(1);
   });
 
   it("appends content blocks for each unique valid file", async () => {
-    const transformFile = vi.fn(async (file: File) => {
-      if (file.type === "application/pdf") {
-        return {
-          type: "file" as const,
-          source_type: "base64" as const,
-          mime_type: file.type,
-          data: `${file.name}-data`,
-          metadata: { filename: file.name },
-        };
-      }
-      return {
-        type: "image" as const,
-        source_type: "base64" as const,
-        mime_type: file.type,
-        data: `${file.name}-data`,
-        metadata: { name: file.name },
-      };
-    });
-
-    const { result } = renderHook(() =>
-      useFileUpload({ transformFile }),
-    );
+    const { result } = renderHook(() => useFileUpload());
     const files = [
       new File(["a"], "photo.png", { type: "image/png" }),
       new File(["b"], "document.pdf", { type: "application/pdf" }),
@@ -141,34 +100,19 @@ describe("useFileUpload", () => {
       } as unknown as ChangeEvent<HTMLInputElement>);
     });
 
-    expect(transformFile.mock.calls.length).toBe(2);
-    expect(result.current.contentBlocks).toEqual([
-      {
-        type: "image",
-        source_type: "base64",
-        mime_type: "image/png",
-        data: "photo.png-data",
-        metadata: { name: "photo.png" },
-      },
-      {
-        type: "file",
-        source_type: "base64",
-        mime_type: "application/pdf",
-        data: "document.pdf-data",
-        metadata: { filename: "document.pdf" },
-      },
-    ]);
+    expect(result.current.contentBlocks.length).toBe(2);
+    const [imageBlock, pdfBlock] = result.current.contentBlocks;
+    expect(imageBlock.type).toBe("image");
+    expect((imageBlock as { metadata?: { name?: string } }).metadata?.name).toBe(
+      "photo.png",
+    );
+    expect(pdfBlock.type).toBe("file");
+    expect((pdfBlock as { metadata?: { filename?: string } }).metadata?.filename).toBe(
+      "document.pdf",
+    );
   });
 
   it("supports removing specific blocks and clearing all state", async () => {
-    const transformFile = vi.fn(async (file: File) => ({
-      type: "image" as const,
-      source_type: "base64" as const,
-      mime_type: file.type,
-      data: `${file.name}-data`,
-      metadata: { name: file.name },
-    }));
-
     const { result } = renderHook(() =>
       useFileUpload({
         initialBlocks: [
@@ -180,7 +124,6 @@ describe("useFileUpload", () => {
             metadata: { name: "existing.png" },
           },
         ],
-        transformFile,
       }),
     );
 

@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { Buffer } from "node:buffer";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
@@ -144,11 +145,67 @@ const ensureCrypto = () => {
   } as Crypto;
 };
 
+const ensureFileReader = () => {
+  class FileReaderStub {
+    result: string | ArrayBuffer | null = null;
+    onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+      null;
+    onloadend:
+      | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+      | null = null;
+    onerror:
+      | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+      | null = null;
+
+    readAsDataURL(file: Blob) {
+      Promise.resolve()
+        .then(() => file.arrayBuffer())
+        .then((arrayBuffer) => {
+          const base64 = Buffer.from(arrayBuffer).toString("base64");
+          const mime = (file as { type?: string }).type ?? "application/octet-stream";
+          this.result = `data:${mime};base64,${base64}`;
+          const event = { target: this } as unknown as ProgressEvent<FileReader>;
+          this.onload?.call(this as unknown as FileReader, event);
+          this.onloadend?.call(this as unknown as FileReader, event);
+        })
+        .catch((error) => {
+          const event = { target: this, error } as unknown as ProgressEvent<FileReader>;
+          this.onerror?.call(this as unknown as FileReader, event);
+          this.onloadend?.call(this as unknown as FileReader, event);
+        });
+    }
+
+    readAsArrayBuffer(file: Blob) {
+      Promise.resolve()
+        .then(() => file.arrayBuffer())
+        .then((arrayBuffer) => {
+          this.result = arrayBuffer;
+          const event = { target: this } as unknown as ProgressEvent<FileReader>;
+          this.onload?.call(this as unknown as FileReader, event);
+          this.onloadend?.call(this as unknown as FileReader, event);
+        })
+        .catch((error) => {
+          const event = { target: this, error } as unknown as ProgressEvent<FileReader>;
+          this.onerror?.call(this as unknown as FileReader, event);
+          this.onloadend?.call(this as unknown as FileReader, event);
+        });
+    }
+
+    abort() {
+      // no-op for tests
+    }
+  }
+
+  (globalThis as { FileReader?: typeof FileReader }).FileReader =
+    FileReaderStub as unknown as typeof FileReader;
+};
+
 ensureLocalStorage();
 ensureMatchMedia();
 ensureObservers();
 ensureBroadcastChannel();
 ensureCrypto();
+ensureFileReader();
 
 if (!originalFetch) {
   globalThis.fetch = vi.fn(async () => {
