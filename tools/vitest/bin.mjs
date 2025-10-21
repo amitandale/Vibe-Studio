@@ -284,6 +284,25 @@ function createVitestPlugin(root) {
         return { path: target };
       });
 
+      const mockModules = {
+        sonner: path.join(root, 'tests/mocks/sonner.ts'),
+        '@langchain/langgraph-sdk': path.join(root, 'tests/mocks/langgraph-sdk.ts'),
+        '@langchain/langgraph-sdk/react': path.join(root, 'tests/mocks/langgraph-sdk-react.ts'),
+        '@langchain/langgraph-sdk/react-ui': path.join(root, 'tests/mocks/langgraph-sdk-react-ui.ts'),
+        nuqs: path.join(root, 'tests/mocks/nuqs.ts'),
+        'lucide-react': path.join(root, 'tests/mocks/lucide-react.tsx'),
+        'langgraph-nextjs-api-passthrough': path.join(
+          root,
+          'tests/mocks/langgraph-nextjs-api-passthrough.ts',
+        ),
+      };
+
+      for (const [pattern, mockPath] of Object.entries(mockModules)) {
+        build.onResolve({ filter: new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }, () => ({
+          path: mockPath,
+        }));
+      }
+
       build.onLoad({ filter: /^vitest-runtime$/, namespace: 'local-vitest' }, () => ({
         contents: [
           'const api = globalThis.__vitest;',

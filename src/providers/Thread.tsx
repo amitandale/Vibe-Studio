@@ -23,7 +23,7 @@ interface ThreadContextType {
 
 const ThreadContext = createContext<ThreadContextType | undefined>(undefined);
 
-function getThreadSearchMetadata(
+export function getThreadSearchMetadata(
   assistantId: string,
 ): { graph_id: string } | { assistant_id: string } {
   if (validate(assistantId)) {
@@ -33,15 +33,27 @@ function getThreadSearchMetadata(
   }
 }
 
-export function ThreadProvider({ children }: { children: ReactNode }) {
-  const [apiUrl] = useQueryState("apiUrl");
-  const [assistantId] = useQueryState("assistantId");
+export interface ThreadProviderProps {
+  children: ReactNode;
+  clientFactory?: typeof createClient;
+  apiKeyResolver?: typeof getApiKey;
+  queryStateHook?: typeof useQueryState;
+}
+
+export function ThreadProvider({
+  children,
+  clientFactory = createClient,
+  apiKeyResolver = getApiKey,
+  queryStateHook = useQueryState,
+}: ThreadProviderProps) {
+  const [apiUrl] = queryStateHook("apiUrl");
+  const [assistantId] = queryStateHook("assistantId");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     if (!apiUrl || !assistantId) return [];
-    const client = createClient(apiUrl, getApiKey() ?? undefined);
+    const client = clientFactory(apiUrl, apiKeyResolver() ?? undefined);
 
     const threads = await client.threads.search({
       metadata: {
@@ -51,7 +63,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     });
 
     return threads;
-  }, [apiUrl, assistantId]);
+  }, [apiUrl, assistantId, apiKeyResolver, clientFactory]);
 
   const value = {
     getThreads,

@@ -18,6 +18,29 @@ function createExpect(received) {
     toBeFalsy() {
       assert.ok(!received);
     },
+    toBeNull() {
+      assert.strictEqual(received, null);
+    },
+    toBeDefined() {
+      assert.notStrictEqual(received, undefined);
+    },
+    toBeUndefined() {
+      assert.strictEqual(received, undefined);
+    },
+    toBeInstanceOf(expected) {
+      assert.ok(received instanceof expected);
+    },
+    toContain(expected) {
+      if (typeof received === 'string') {
+        assert.ok(received.includes(expected));
+        return;
+      }
+      if (Array.isArray(received)) {
+        assert.ok(received.includes(expected));
+        return;
+      }
+      throw new TypeError('toContain works with strings or arrays');
+    },
     toThrow(expected) {
       if (typeof received !== 'function') {
         throw new TypeError('expect(...).toThrow requires a function');
@@ -33,6 +56,37 @@ function createExpect(received) {
       },
     },
   };
+
+  if (received && typeof received.then === 'function') {
+    expectApi.resolves = {
+      toEqual: async (expected) => {
+        const value = await received;
+        assert.deepEqual(value, expected);
+      },
+      toBe: async (expected) => {
+        const value = await received;
+        assert.strictEqual(value, expected);
+      },
+    };
+    expectApi.rejects = {
+      toThrow: async (expected) => {
+        let thrown = false;
+        try {
+          await received;
+        } catch (error) {
+          thrown = true;
+          assert.throws(() => {
+            throw error;
+          }, expected);
+        }
+        if (!thrown) {
+          throw new assert.AssertionError({
+            message: 'Promise resolved but expected rejection',
+          });
+        }
+      },
+    };
+  }
   return expectApi;
 }
 

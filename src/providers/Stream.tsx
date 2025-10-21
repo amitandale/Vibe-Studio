@@ -42,11 +42,11 @@ const useTypedStream = useStream<
 type StreamContextType = ReturnType<typeof useTypedStream>;
 const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
-async function sleep(ms = 4000) {
+export async function sleep(ms = 4000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checkGraphStatus(
+export async function checkGraphStatus(
   apiUrl: string,
   apiKey: string | null,
 ): Promise<boolean> {
@@ -66,20 +66,32 @@ async function checkGraphStatus(
   }
 }
 
-const StreamSession = ({
-  children,
-  apiKey,
-  apiUrl,
-  assistantId,
-}: {
+export interface StreamSessionProps {
   children: ReactNode;
   apiKey: string | null;
   apiUrl: string;
   assistantId: string;
-}) => {
-  const [threadId, setThreadId] = useQueryState("threadId");
-  const { getThreads, setThreads } = useThreads();
-  const streamValue = useTypedStream({
+  streamHook?: typeof useTypedStream;
+  sleepFn?: typeof sleep;
+  checkGraphStatusFn?: typeof checkGraphStatus;
+  threadsContext?: Pick<ReturnType<typeof useThreads>, "getThreads" | "setThreads">;
+  queryStateHook?: typeof useQueryState;
+}
+
+export const StreamSession = ({
+  children,
+  apiKey,
+  apiUrl,
+  assistantId,
+  streamHook = useTypedStream,
+  sleepFn = sleep,
+  checkGraphStatusFn = checkGraphStatus,
+  threadsContext,
+  queryStateHook = useQueryState,
+}: StreamSessionProps) => {
+  const [threadId, setThreadId] = queryStateHook("threadId");
+  const { getThreads, setThreads } = threadsContext ?? useThreads();
+  const streamValue = streamHook({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
@@ -97,12 +109,12 @@ const StreamSession = ({
       setThreadId(id);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
-      sleep().then(() => getThreads().then(setThreads).catch(console.error));
+      sleepFn().then(() => getThreads().then(setThreads).catch(console.error));
     },
   });
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, apiKey).then((ok) => {
+    checkGraphStatusFn(apiUrl, apiKey).then((ok) => {
       if (!ok) {
         toast.error("Failed to connect to LangGraph server", {
           description: () => (
@@ -117,7 +129,7 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiKey, apiUrl]);
+  }, [apiKey, apiUrl, checkGraphStatusFn]);
 
   return (
     <StreamContext.Provider value={streamValue}>
@@ -127,22 +139,43 @@ const StreamSession = ({
 };
 
 // Default values for the form
-const DEFAULT_API_URL = "http://localhost:2024";
-const DEFAULT_ASSISTANT_ID = "agent";
+export const DEFAULT_API_URL = "http://localhost:2024";
+export const DEFAULT_ASSISTANT_ID = "agent";
 
-export const StreamProvider: React.FC<{ children: ReactNode }> = ({
+export interface StreamProviderDependencies {
+  queryStateHook?: typeof useQueryState;
+  streamHook?: typeof useTypedStream;
+  sleepFn?: typeof sleep;
+  checkGraphStatusFn?: typeof checkGraphStatus;
+  threadsContext?: Pick<ReturnType<typeof useThreads>, "getThreads" | "setThreads">;
+}
+
+export interface StreamProviderProps {
+  children: ReactNode;
+  dependencies?: StreamProviderDependencies;
+}
+
+export const StreamProvider: React.FC<StreamProviderProps> = ({
   children,
+  dependencies = {},
 }) => {
+  const {
+    queryStateHook = useQueryState,
+    streamHook = useTypedStream,
+    sleepFn = sleep,
+    checkGraphStatusFn = checkGraphStatus,
+    threadsContext,
+  } = dependencies;
   // Get environment variables
   const envApiUrl: string | undefined = process.env.NEXT_PUBLIC_API_URL;
   const envAssistantId: string | undefined =
     process.env.NEXT_PUBLIC_ASSISTANT_ID;
 
   // Use URL params with env var fallbacks
-  const [apiUrl, setApiUrl] = useQueryState("apiUrl", {
+  const [apiUrl, setApiUrl] = queryStateHook("apiUrl", {
     defaultValue: envApiUrl || "",
   });
-  const [assistantId, setAssistantId] = useQueryState("assistantId", {
+  const [assistantId, setAssistantId] = queryStateHook("assistantId", {
     defaultValue: envAssistantId || "",
   });
 
@@ -268,6 +301,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       apiKey={apiKey}
       apiUrl={apiUrl}
       assistantId={assistantId}
+      streamHook={streamHook}
+      sleepFn={sleepFn}
+      checkGraphStatusFn={checkGraphStatusFn}
+      threadsContext={threadsContext}
+      queryStateHook={queryStateHook}
     >
       {children}
     </StreamSession>
