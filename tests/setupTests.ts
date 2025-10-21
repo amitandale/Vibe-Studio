@@ -3,6 +3,179 @@ import { Buffer } from "node:buffer";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+const ensureDomEnvironment = () => {
+  if (typeof document !== "undefined" && typeof window !== "undefined") {
+    return;
+  }
+
+  class MockNode {
+    parentNode: MockNode | null = null;
+    childNodes: MockNode[] = [];
+    textContent: string | null = null;
+    nodeType: number;
+
+    constructor(nodeType: number) {
+      this.nodeType = nodeType;
+    }
+
+    appendChild<T extends MockNode>(node: T): T {
+      this.childNodes.push(node);
+      node.parentNode = this;
+      return node;
+    }
+
+    removeChild<T extends MockNode>(node: T): T {
+      const index = this.childNodes.indexOf(node);
+      if (index >= 0) {
+        this.childNodes.splice(index, 1);
+        node.parentNode = null;
+      }
+      return node;
+    }
+
+    get firstChild(): MockNode | null {
+      return this.childNodes[0] ?? null;
+    }
+  }
+
+  class MockElement extends MockNode {
+    nodeName: string;
+    tagName: string;
+    attributes = new Map<string, string>();
+    style: Record<string, string> = {};
+    ownerDocument: MockDocument;
+    namespaceURI = "http://www.w3.org/1999/xhtml";
+
+    constructor(ownerDocument: MockDocument, tagName: string) {
+      super(1);
+      this.ownerDocument = ownerDocument;
+      this.nodeName = tagName.toUpperCase();
+      this.tagName = this.nodeName;
+    }
+
+    setAttribute(name: string, value: string) {
+      this.attributes.set(name, value);
+    }
+
+    removeAttribute(name: string) {
+      this.attributes.delete(name);
+    }
+
+    getAttribute(name: string) {
+      return this.attributes.get(name) ?? null;
+    }
+  }
+
+  class MockText extends MockNode {
+    nodeValue: string;
+
+    constructor(text: string) {
+      super(3);
+      this.nodeValue = text;
+      this.textContent = text;
+    }
+  }
+
+  class MockDocument extends MockNode {
+    body: MockElement;
+    documentElement: MockElement;
+    defaultView: (Window & typeof globalThis) | null = null;
+
+    constructor() {
+      super(9);
+      this.documentElement = new MockElement(this, "html");
+      this.body = new MockElement(this, "body");
+      this.appendChild(this.documentElement);
+      this.documentElement.appendChild(this.body);
+    }
+
+    createElement(tagName: string) {
+      return new MockElement(this, tagName);
+    }
+
+    createElementNS(_namespace: string, tagName: string) {
+      return new MockElement(this, tagName);
+    }
+
+    createTextNode(text: string) {
+      return new MockText(text);
+    }
+
+    removeChild<T extends MockNode>(node: T): T {
+      return super.removeChild(node);
+    }
+  }
+
+  const mockDocument = new MockDocument();
+
+  const listeners = new Map<string, Set<EventListener>>();
+  const eventTarget = {
+    addEventListener(type: string, listener: EventListener) {
+      const set = listeners.get(type) ?? new Set<EventListener>();
+      set.add(listener);
+      listeners.set(type, set);
+    },
+    removeEventListener(type: string, listener: EventListener) {
+      const set = listeners.get(type);
+      if (!set) return;
+      set.delete(listener);
+      if (set.size === 0) {
+        listeners.delete(type);
+      }
+    },
+    dispatchEvent(event: Event) {
+      const set = listeners.get(event.type);
+      if (!set) return false;
+      set.forEach((listener) => listener.call(windowObject, event));
+      return true;
+    },
+  };
+
+  const windowObject = (globalThis as { window?: Window & typeof globalThis }).window ??
+    ({} as Window & typeof globalThis);
+
+  const navigatorValue = (globalThis.navigator ?? {
+    userAgent: "node",
+    language: "en-US",
+    languages: ["en-US"],
+    clipboard: {
+      writeText: async () => {},
+    },
+  }) as Navigator;
+
+  Object.assign(windowObject, eventTarget, {
+    document: mockDocument as unknown as Document,
+  });
+
+  Object.defineProperty(windowObject, "navigator", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: navigatorValue,
+  });
+
+  (windowObject as { HTMLElement?: typeof HTMLElement }).HTMLElement =
+    MockElement as unknown as typeof HTMLElement;
+  (windowObject as { Node?: typeof Node }).Node =
+    MockNode as unknown as typeof Node;
+  (windowObject as { Document?: typeof Document }).Document =
+    MockDocument as unknown as typeof Document;
+
+  mockDocument.defaultView = windowObject;
+
+  (globalThis as { window?: Window & typeof globalThis }).window = windowObject;
+  (globalThis as { document?: Document }).document =
+    mockDocument as unknown as Document;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: windowObject.navigator,
+  });
+};
+
+ensureDomEnvironment();
+
 const originalFetch = globalThis.fetch;
 const originalCrypto = globalThis.crypto;
 

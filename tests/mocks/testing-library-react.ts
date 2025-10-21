@@ -1,188 +1,181 @@
-import type { MutableRefObject } from "./react";
-import { __setDispatcher } from "./react";
-
-type HookCallback<TResult> = () => TResult;
-
-type HookResult<TResult> = {
-  current: TResult;
+const ReactModule = require("react") as {
+  __setDispatcher: (dispatcher: Dispatcher | null) => void;
+  createElement: typeof import("react")["createElement"];
 };
 
-type RenderHookResult<TResult> = {
-  result: HookResult<TResult>;
-  rerender: (callback?: HookCallback<TResult>) => void;
+type HookCallback<TValue> = () => TValue;
+
+type HookResult<TValue> = {
+  current: TValue;
+};
+
+type RenderHookReturn<TValue> = {
+  result: HookResult<TValue>;
+  rerender: (nextCallback?: HookCallback<TValue>) => void;
   unmount: () => void;
 };
 
-type StateUpdater<T> = (value: T | ((prev: T) => T)) => void;
-
-type Dispatcher = {
-  useState<T>(initial: T | (() => T)): [T, StateUpdater<T>];
-  useEffect(effect: () => void | (() => void), deps?: unknown[]): void;
-  useRef<T>(initial: T): MutableRefObject<T>;
+type EffectState = {
+  deps?: unknown[];
+  cleanup?: (() => void) | void;
 };
 
-type EffectRecord = {
+type PendingEffect = {
+  index: number;
   effect: () => void | (() => void);
   deps?: unknown[];
-  cleanup?: () => void;
-  pending: boolean;
 };
 
-type Renderer<TResult> = {
-  run: () => void;
-  flushEffects: () => void;
-  cleanup: () => void;
+type Dispatcher = {
+  useState<TValue>(
+    initial: TValue | (() => TValue),
+  ): [TValue, (value: TValue | ((prev: TValue) => TValue)) => void];
+  useEffect(effect: () => void | (() => void), deps?: unknown[]): void;
+  useRef<TValue>(initial: TValue): { current: TValue };
 };
 
-let activeRenderer: Renderer<unknown> | null = null;
+const { __setDispatcher } = ReactModule;
 
-const isDepsChanged = (prev?: unknown[], next?: unknown[]) => {
-  if (!prev || !next) return true;
-  if (prev.length !== next.length) return true;
-  for (let i = 0; i < prev.length; i += 1) {
-    if (!Object.is(prev[i], next[i])) {
-      return true;
-    }
+const mountedRenderers = new Set<() => void>();
+
+const areHookDepsEqual = (prev?: unknown[], next?: unknown[]) => {
+  if (!prev || !next) {
+    return false;
   }
-  return false;
+  if (prev.length !== next.length) {
+    return false;
+  }
+  return prev.every((value, index) => Object.is(value, next[index]));
 };
 
-export const act = async (callback: () => void | Promise<void>) => {
-  await callback();
-  activeRenderer?.flushEffects();
-};
+export function act(callback: () => void | Promise<void>): Promise<void> | void {
+  try {
+    const result = callback();
+    if (result && typeof (result as Promise<void>).then === "function") {
+      return (result as Promise<void>).then(() => undefined);
+    }
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  return undefined;
+}
 
-export const cleanup = () => {
-  activeRenderer?.cleanup();
-  activeRenderer = null;
-};
+export function cleanup(): void {
+  for (const unmount of mountedRenderers) {
+    unmount();
+  }
+  mountedRenderers.clear();
+}
 
-export function renderHook<TResult>(
-  callback: HookCallback<TResult>,
-): RenderHookResult<TResult> {
-  const stateValues: unknown[] = [];
-  const refs: MutableRefObject<unknown>[] = [];
-  const effects: EffectRecord[] = [];
-  let pendingEffectIndexes = new Set<number>();
-  let hookCallback = callback;
-
-  const result: HookResult<TResult> = {
-    current: undefined as unknown as TResult,
+export function renderHook<TValue>(
+  callback: HookCallback<TValue>,
+): RenderHookReturn<TValue> {
+  const stateStore: unknown[] = [];
+  const refStore: { current: unknown }[] = [];
+  const effectStore: EffectState[] = [];
+  const result: HookResult<TValue> = {
+    current: undefined as unknown as TValue,
   };
 
-  const dispatcher: Dispatcher = {
-    useState<T>(initial: T | (() => T)) {
-      const index = stateValues.length;
-      if (stateCursor >= stateValues.length) {
-        stateValues.push(
-          typeof initial === "function"
-            ? (initial as () => T)()
-            : initial,
-        );
-      }
-      const currentIndex = stateCursor;
-      const setState: StateUpdater<T> = (value) => {
-        const nextValue =
-          typeof value === "function"
-            ? (value as (prev: T) => T)(stateValues[currentIndex] as T)
-            : value;
-        if (!Object.is(stateValues[currentIndex], nextValue)) {
-          stateValues[currentIndex] = nextValue;
-          renderer.run();
-          renderer.flushEffects();
-        }
-      };
-      const value = stateValues[stateCursor] as T;
-      stateCursor += 1;
-      return [value, setState];
-    },
-    useEffect(effect, deps) {
-      const index = effectCursor;
-      const prev = effects[index];
-      const record: EffectRecord = {
-        effect,
-        deps,
-        cleanup: prev?.cleanup,
-        pending: prev ? isDepsChanged(prev.deps, deps) : true,
-      };
-      effects[index] = record;
-      if (record.pending) {
-        pendingEffectIndexes.add(index);
-      }
-      effectCursor += 1;
-    },
-    useRef<T>(initial: T) {
-      if (refCursor >= refs.length) {
-        refs.push({ current: initial });
-      }
-      const value = refs[refCursor] as MutableRefObject<T>;
-      refCursor += 1;
-      return value;
-    },
-  };
+  let currentCallback = callback;
+  let isUnmounted = false;
 
-  let stateCursor = 0;
-  let effectCursor = 0;
-  let refCursor = 0;
-
-  const runHook = () => {
-    stateCursor = 0;
-    effectCursor = 0;
-    refCursor = 0;
-    __setDispatcher(dispatcher);
-    result.current = hookCallback();
-    __setDispatcher(null);
-  };
-
-  const flushEffects = () => {
-    const indexes = Array.from(pendingEffectIndexes);
-    pendingEffectIndexes = new Set();
-    indexes.forEach((index) => {
-      const record = effects[index];
-      if (!record) return;
-      record.cleanup?.();
+  const runPendingEffects = (effects: PendingEffect[]) => {
+    for (const record of effects) {
+      const previous = effectStore[record.index];
+      if (previous?.cleanup) {
+        previous.cleanup();
+      }
       const cleanup = record.effect();
-      record.cleanup = typeof cleanup === "function" ? cleanup : undefined;
-      record.pending = false;
-    });
+      effectStore[record.index] = {
+        deps: record.deps,
+        cleanup: typeof cleanup === "function" ? cleanup : undefined,
+      };
+    }
   };
 
-  const cleanupEffects = () => {
-    effects.forEach((record) => {
-      record.cleanup?.();
-      record.cleanup = undefined;
-      record.pending = false;
-    });
+  const render = () => {
+    if (isUnmounted) {
+      return;
+    }
+
+    let hookIndex = 0;
+    const pendingEffects: PendingEffect[] = [];
+
+    const dispatcher: Dispatcher = {
+      useState<TValue>(initial: TValue | (() => TValue)) {
+        const index = hookIndex++;
+        if (!(index in stateStore)) {
+          stateStore[index] =
+            typeof initial === "function" ? (initial as () => TValue)() : initial;
+        }
+        const setState = (value: TValue | ((prev: TValue) => TValue)) => {
+          const previous = stateStore[index] as TValue;
+          const next =
+            typeof value === "function"
+              ? (value as (prev: TValue) => TValue)(previous)
+              : value;
+          if (!Object.is(previous, next)) {
+            stateStore[index] = next;
+            render();
+          }
+        };
+        return [stateStore[index] as TValue, setState];
+      },
+      useEffect(effect: () => void | (() => void), deps?: unknown[]) {
+        const index = hookIndex++;
+        const previous = effectStore[index];
+        const shouldRun =
+          !previous || !deps || !previous.deps || !areHookDepsEqual(previous.deps, deps);
+        if (shouldRun) {
+          pendingEffects.push({ index, effect, deps });
+        }
+      },
+      useRef<TValue>(initial: TValue) {
+        const index = hookIndex++;
+        if (!(index in refStore)) {
+          refStore[index] = { current: initial };
+        }
+        return refStore[index] as { current: TValue };
+      },
+    };
+
+    __setDispatcher(dispatcher);
+    try {
+      result.current = currentCallback();
+    } finally {
+      __setDispatcher(null);
+    }
+
+    runPendingEffects(pendingEffects);
   };
 
-  const renderer: Renderer<TResult> = {
-    run: () => {
-      activeRenderer = renderer as Renderer<unknown>;
-      runHook();
-    },
-    flushEffects: () => {
-      flushEffects();
-    },
-    cleanup: () => {
-      cleanupEffects();
-      activeRenderer = null;
-    },
+  const unmount = () => {
+    if (isUnmounted) {
+      return;
+    }
+    isUnmounted = true;
+    for (const record of effectStore) {
+      if (record?.cleanup) {
+        record.cleanup();
+      }
+    }
   };
 
-  renderer.run();
-  renderer.flushEffects();
+  mountedRenderers.add(unmount);
+  render();
 
   return {
     result,
-    rerender(nextCallback?: HookCallback<TResult>) {
+    rerender: (nextCallback?: HookCallback<TValue>) => {
       if (nextCallback) {
-        hookCallback = nextCallback;
+        currentCallback = nextCallback;
       }
-      renderer.run();
-      renderer.flushEffects();
+      render();
     },
-    unmount() {
-      renderer.cleanup();
+    unmount: () => {
+      mountedRenderers.delete(unmount);
+      unmount();
     },
   };
 }
