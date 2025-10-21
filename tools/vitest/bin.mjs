@@ -284,6 +284,34 @@ function createVitestPlugin(root) {
         return { path: target };
       });
 
+      const additionalAliases = {
+        '@testing-library/react': path.join(root, 'tests/mocks/testing-library-react.ts'),
+        '@testing-library/jest-dom/vitest': path.join(
+          root,
+          'tests/mocks/testing-library-jest-dom.ts',
+        ),
+        sonner: path.join(root, 'tests/mocks/sonner.ts'),
+        react: path.join(root, 'tests/mocks/react.ts'),
+      };
+
+      build.onResolve(
+        {
+          filter: new RegExp(
+            `^(${Object.keys(additionalAliases)
+              .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('|')})$`,
+          ),
+        },
+        (args) => {
+          const targetBase = additionalAliases[args.path];
+          const target = resolveWithExtensions(targetBase);
+          if (!target) {
+            throw new Error(`Cannot resolve module ${args.path}`);
+          }
+          return { path: target };
+        },
+      );
+
       build.onLoad({ filter: /^vitest-runtime$/, namespace: 'local-vitest' }, () => ({
         contents: [
           'const api = globalThis.__vitest;',

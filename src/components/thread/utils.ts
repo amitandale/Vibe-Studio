@@ -8,8 +8,12 @@ import type { Message } from "@langchain/langgraph-sdk";
  */
 export function getContentString(content: Message["content"]): string {
   if (typeof content === "string") return content;
-  if (!Array.isArray(content) || content.length === 0) {
+  if (!Array.isArray(content)) {
     return "Multimodal message";
+  }
+
+  if (content.length === 0) {
+    return "";
   }
 
   const textBlocks = content
