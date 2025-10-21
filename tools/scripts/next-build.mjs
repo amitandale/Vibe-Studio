@@ -81,6 +81,7 @@ const child = spawn(process.execPath, [nextBin, "build"], {
     NEXT_FONT_GOOGLE_MOCKED_RESPONSES:
       process.env.NEXT_FONT_GOOGLE_MOCKED_RESPONSES ?? defaultMockPath,
     LIGHTNINGCSS_PLATFORM: process.env.LIGHTNINGCSS_PLATFORM ?? "wasm32-wasi",
+    CSS_TRANSFORMER_WASM: process.env.CSS_TRANSFORMER_WASM ?? "1",
   },
 });
 
