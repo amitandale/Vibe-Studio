@@ -262,10 +262,10 @@ function createModuleLoader(runtime, root) {
     '@testing-library/react': path.join(root, 'tests/mocks/testing-library-react.ts'),
     '@testing-library/jest-dom/vitest': path.join(root, 'tests/mocks/testing-library-jest-dom.ts'),
     sonner: path.join(root, 'tests/mocks/sonner.ts'),
-    react: path.join(root, 'tests/mocks/react.ts'),
+    react: path.join(root, 'tests/mocks/react.cts'),
   };
 
-  const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
+  const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.cts', '.json'];
   const vitestExports = Object.assign({}, runtime.getGlobalApi());
   vitestExports.default = vitestExports;
   const vitestConfigExports = {
@@ -351,11 +351,13 @@ function createModuleLoader(runtime, root) {
       return resolveFilePath(path.join(root, 'src', specifier.slice(2)));
     }
 
-    if (specifier.startsWith('.') || specifier.startsWith('/')) {
-      const base = specifier.startsWith('.')
-        ? path.resolve(path.dirname(importer), specifier)
-        : path.join(root, specifier.slice(1));
+    if (specifier.startsWith('.')) {
+      const base = path.resolve(path.dirname(importer), specifier);
       return resolveFilePath(base);
+    }
+
+    if (path.isAbsolute(specifier)) {
+      return resolveFilePath(specifier);
     }
 
     if (specifier.startsWith('node:')) {
@@ -386,11 +388,13 @@ function createModuleLoader(runtime, root) {
       return loadModule(path.join(root, 'src', specifier.slice(2)));
     }
 
-    if (specifier.startsWith('.') || specifier.startsWith('/')) {
-      const base = specifier.startsWith('.')
-        ? path.resolve(path.dirname(importer), specifier)
-        : path.join(root, specifier.slice(1));
+    if (specifier.startsWith('.')) {
+      const base = path.resolve(path.dirname(importer), specifier);
       return loadModule(base);
+    }
+
+    if (path.isAbsolute(specifier)) {
+      return loadModule(specifier);
     }
 
     if (specifier.startsWith('node:')) {

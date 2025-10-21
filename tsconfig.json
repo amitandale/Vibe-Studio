@@ -18,7 +18,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@testing-library/react": ["./tests/mocks/testing-library-react"]
     },
     "target": "ES2017"
   },
