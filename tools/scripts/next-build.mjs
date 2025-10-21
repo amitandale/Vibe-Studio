@@ -80,6 +80,7 @@ const child = spawn(process.execPath, [nextBin, "build"], {
     NEXT_DISABLE_FONT_DOWNLOADS: process.env.NEXT_DISABLE_FONT_DOWNLOADS ?? "true",
     NEXT_FONT_GOOGLE_MOCKED_RESPONSES:
       process.env.NEXT_FONT_GOOGLE_MOCKED_RESPONSES ?? defaultMockPath,
+    LIGHTNINGCSS_PLATFORM: process.env.LIGHTNINGCSS_PLATFORM ?? "wasm32-wasi",
   },
 });
 
