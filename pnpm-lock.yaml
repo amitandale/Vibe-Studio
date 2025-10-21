@@ -186,8 +186,16 @@ importers:
       typescript-eslint:
         specifier: ^8.22.0
         version: 8.32.1(eslint@9.27.0(jiti@2.4.2))(typescript@5.7.3)
+      vitest:
+        specifier: file:tools/vitest
+        version: file:tools/vitest
 
 packages:
+
+  vitest@file:tools/vitest:
+    resolution: {directory: tools/vitest, type: directory}
+    bin:
+      vitest: bin.mjs
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -3572,6 +3580,8 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  vitest@file:tools/vitest: {}
 
   '@alloc/quick-lru@5.2.0': {}
 

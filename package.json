@@ -16,7 +16,10 @@
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "node ./tools/vitest/bin.mjs",
+    "test:run": "node ./tools/vitest/bin.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@langchain/core": "^0.3.44",
@@ -79,7 +82,8 @@
     "tailwind-scrollbar": "^4.0.1",
     "tailwindcss": "^4.0.13",
     "typescript": "~5.7.2",
-    "typescript-eslint": "^8.22.0"
+    "typescript-eslint": "^8.22.0",
+    "vitest": "file:tools/vitest"
   },
   "overrides": {
     "react-is": "^19.0.0-rc-69d4b800-20241021"
