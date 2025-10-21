@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { build } from 'esbuild';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 
 import { VitestRuntime, installGlobalApi } from './runtime.mjs';
 
@@ -38,25 +39,15 @@ if (testFiles.length === 0) {
 
 const runtime = new VitestRuntime();
 const cleanup = installGlobalApi(runtime);
+const loader = createModuleLoader(runtime, ROOT);
 
-const plugin = createVitestPlugin(ROOT);
+ensureMutableGlobals();
 
 try {
+  await runSetupFiles(loader, config);
   for (const file of testFiles) {
     await runtime.withFile(file, async () => {
-      const result = await build({
-        entryPoints: [file],
-        bundle: true,
-        platform: 'node',
-        format: 'esm',
-        write: false,
-        absWorkingDir: ROOT,
-        sourcemap: 'inline',
-        plugins: [plugin],
-      });
-      const code = `${result.outputFiles[0].text}\n//# sourceURL=${pathToFileURL(file).toString()}`;
-      const moduleUrl = `data:text/javascript;base64,${Buffer.from(code, 'utf8').toString('base64')}`;
-      await import(moduleUrl);
+      await loader.executeFile(file);
     });
   }
 } catch (error) {
@@ -79,6 +70,18 @@ if (results.tests.some((test) => test.status === 'failed')) {
   process.exitCode = 1;
 }
 
+function ensureMutableGlobals() {
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  if (cryptoDescriptor && (!cryptoDescriptor.writable || typeof cryptoDescriptor.set !== 'function')) {
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      writable: true,
+      enumerable: cryptoDescriptor.enumerable ?? true,
+      value: globalThis.crypto,
+    });
+  }
+}
+
 async function loadConfig(root) {
   const candidates = [
     'vitest.config.ts',
@@ -97,7 +100,6 @@ async function loadConfig(root) {
     }
 
     if (candidate.endsWith('.cjs')) {
-      const { createRequire } = await import('node:module');
       const require = createRequire(fullPath);
       return require(fullPath);
     }
@@ -107,20 +109,22 @@ async function loadConfig(root) {
       return mod.default ?? mod.config ?? mod;
     }
 
-    const result = await build({
-      entryPoints: [fullPath],
-      bundle: true,
-      platform: 'node',
-      format: 'esm',
-      write: false,
-      absWorkingDir: root,
-      sourcemap: 'inline',
-      plugins: [createVitestPlugin(root)],
+    const source = await fs.readFile(fullPath, 'utf8');
+    const transpiled = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+      },
+      fileName: fullPath,
     });
-    const code = `${result.outputFiles[0].text}\n//# sourceURL=${pathToFileURL(fullPath).toString()}`;
-    const moduleUrl = `data:text/javascript;base64,${Buffer.from(code, 'utf8').toString('base64')}`;
-    const mod = await import(moduleUrl);
-    return mod.default ?? mod.config ?? mod;
+
+    const exports = {};
+    const module = { exports };
+    const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', transpiled.outputText);
+    fn(exports, createRequire(fullPath), module, fullPath, path.dirname(fullPath));
+    const configObject = module.exports;
+    return configObject?.default ?? configObject?.config ?? configObject;
   }
 
   return {};
@@ -249,90 +253,190 @@ async function walk(dir, onFile) {
 }
 
 function toRelativePath(root, filePath) {
-  return path
-    .relative(root, filePath)
-    .split(path.sep)
-    .join('/');
+  return path.relative(root, filePath).split(path.sep).join('/');
 }
 
-function createVitestPlugin(root) {
+function createModuleLoader(runtime, root) {
+  const moduleCache = new Map();
+  const aliasMap = {
+    '@testing-library/react': path.join(root, 'tests/mocks/testing-library-react.ts'),
+    '@testing-library/jest-dom/vitest': path.join(root, 'tests/mocks/testing-library-jest-dom.ts'),
+    sonner: path.join(root, 'tests/mocks/sonner.ts'),
+    react: path.join(root, 'tests/mocks/react.ts'),
+  };
+
+  const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
+  const vitestExports = Object.assign({}, runtime.getGlobalApi());
+  vitestExports.default = vitestExports;
+  const vitestConfigExports = {
+    defineConfig: (configObject) => configObject,
+    default: (configObject) => configObject,
+  };
+
+  const loadModule = (filePath) => {
+    const resolved = resolveFilePath(filePath);
+    if (!resolved) {
+      throw new Error(`Cannot resolve module ${filePath}`);
+    }
+    if (moduleCache.has(resolved)) {
+      return moduleCache.get(resolved).exports;
+    }
+
+    const module = { exports: {} };
+    moduleCache.set(resolved, module);
+
+    if (resolved.endsWith('.json')) {
+      const jsonContent = fsSync.readFileSync(resolved, 'utf8');
+      module.exports = JSON.parse(jsonContent);
+      return module.exports;
+    }
+
+    const source = fsSync.readFileSync(resolved, 'utf8');
+    const compilerOptions = {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.CommonJS,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      esModuleInterop: true,
+      allowSyntheticDefaultImports: true,
+      jsx: resolved.endsWith('.tsx') || resolved.endsWith('.jsx') ? ts.JsxEmit.ReactJSX : ts.JsxEmit.Preserve,
+      resolveJsonModule: true,
+    };
+
+    const transpiled = ts.transpileModule(source, {
+      compilerOptions,
+      fileName: resolved,
+    });
+
+    const localRequire = (specifier) => requireModule(specifier, resolved);
+    localRequire.resolve = (specifier) => resolveSpecifierPath(specifier, resolved);
+    const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', transpiled.outputText);
+    fn(module.exports, localRequire, module, resolved, path.dirname(resolved));
+    return module.exports;
+  };
+
+  const resolveFilePath = (targetPath) => {
+    if (moduleCache.has(targetPath)) {
+      return targetPath;
+    }
+
+    if (isFile(targetPath)) {
+      return targetPath;
+    }
+
+    for (const ext of extensions) {
+      const candidate = `${targetPath}${ext}`;
+      if (isFile(candidate)) {
+        return candidate;
+      }
+    }
+
+    if (isDirectory(targetPath)) {
+      for (const ext of extensions) {
+        const candidate = path.join(targetPath, `index${ext}`);
+        if (isFile(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const resolveSpecifierPath = (specifier, importer) => {
+    if (aliasMap[specifier]) {
+      return resolveFilePath(aliasMap[specifier]);
+    }
+
+    if (specifier.startsWith('@/')) {
+      return resolveFilePath(path.join(root, 'src', specifier.slice(2)));
+    }
+
+    if (specifier.startsWith('.') || specifier.startsWith('/')) {
+      const base = specifier.startsWith('.')
+        ? path.resolve(path.dirname(importer), specifier)
+        : path.join(root, specifier.slice(1));
+      return resolveFilePath(base);
+    }
+
+    if (specifier.startsWith('node:')) {
+      return specifier;
+    }
+
+    const nodeRequire = createRequire(importer);
+    try {
+      return nodeRequire.resolve(specifier);
+    } catch {
+      return null;
+    }
+  };
+
+  const requireModule = (specifier, importer) => {
+    if (specifier === 'vitest') {
+      return vitestExports;
+    }
+    if (specifier === 'vitest/config') {
+      return vitestConfigExports;
+    }
+
+    if (aliasMap[specifier]) {
+      return loadModule(aliasMap[specifier]);
+    }
+
+    if (specifier.startsWith('@/')) {
+      return loadModule(path.join(root, 'src', specifier.slice(2)));
+    }
+
+    if (specifier.startsWith('.') || specifier.startsWith('/')) {
+      const base = specifier.startsWith('.')
+        ? path.resolve(path.dirname(importer), specifier)
+        : path.join(root, specifier.slice(1));
+      return loadModule(base);
+    }
+
+    if (specifier.startsWith('node:')) {
+      const nodeRequire = createRequire(root);
+      return nodeRequire(specifier);
+    }
+
+    const nodeRequire = createRequire(importer);
+    return nodeRequire(specifier);
+  };
+
+  const isFile = (candidate) => {
+    try {
+      const stats = fsSync.statSync(candidate);
+      return stats.isFile();
+    } catch {
+      return false;
+    }
+  };
+
+  const isDirectory = (candidate) => {
+    try {
+      const stats = fsSync.statSync(candidate);
+      return stats.isDirectory();
+    } catch {
+      return false;
+    }
+  };
+
   return {
-    name: 'local-vitest-stub',
-    setup(build) {
-      const resolveWithExtensions = (basePath) => {
-        const tryPaths = [basePath, `${basePath}.ts`, `${basePath}.tsx`, `${basePath}.js`, `${basePath}.mjs`, `${basePath}.mts`];
-        for (const candidate of tryPaths) {
-          try {
-            const stats = fsSync.statSync(candidate);
-            if (stats.isFile()) {
-              return candidate;
-            }
-          } catch {
-            continue;
-          }
-        }
-        return null;
-      };
-
-      build.onResolve({ filter: /^vitest$/ }, () => ({ path: 'vitest-runtime', namespace: 'local-vitest' }));
-      build.onResolve({ filter: /^vitest\/config$/ }, () => ({ path: 'vitest-config', namespace: 'local-vitest' }));
-      build.onResolve({ filter: /^@\// }, (args) => {
-        const target = resolveWithExtensions(path.join(root, 'src', args.path.slice(2)));
-        if (!target) {
-          throw new Error(`Cannot resolve module ${args.path}`);
-        }
-        return { path: target };
-      });
-
-      const additionalAliases = {
-        '@testing-library/react': path.join(root, 'tests/mocks/testing-library-react.ts'),
-        '@testing-library/jest-dom/vitest': path.join(
-          root,
-          'tests/mocks/testing-library-jest-dom.ts',
-        ),
-        sonner: path.join(root, 'tests/mocks/sonner.ts'),
-        react: path.join(root, 'tests/mocks/react.ts'),
-      };
-
-      build.onResolve(
-        {
-          filter: new RegExp(
-            `^(${Object.keys(additionalAliases)
-              .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-              .join('|')})$`,
-          ),
-        },
-        (args) => {
-          const targetBase = additionalAliases[args.path];
-          const target = resolveWithExtensions(targetBase);
-          if (!target) {
-            throw new Error(`Cannot resolve module ${args.path}`);
-          }
-          return { path: target };
-        },
-      );
-
-      build.onLoad({ filter: /^vitest-runtime$/, namespace: 'local-vitest' }, () => ({
-        contents: [
-          'const api = globalThis.__vitest;',
-          'if (!api) { throw new Error("Vitest runtime is not initialized"); }',
-          'export const describe = api.describe;',
-          'export const it = api.it;',
-          'export const test = api.test;',
-          'export const expect = api.expect;',
-          'export const beforeEach = api.beforeEach;',
-          'export const afterEach = api.afterEach;',
-          'export const vi = api.vi;',
-        ].join('\n'),
-        loader: 'js',
-      }));
-
-      build.onLoad({ filter: /^vitest-config$/, namespace: 'local-vitest' }, () => ({
-        contents: 'export const defineConfig = (config) => config; export default defineConfig;',
-        loader: 'js',
-      }));
+    async executeFile(filePath) {
+      const resolved = path.isAbsolute(filePath) ? filePath : path.join(root, filePath);
+      loadModule(resolved);
     },
   };
+}
+
+async function runSetupFiles(loader, configObject) {
+  const setupFiles = Array.isArray(configObject?.test?.setupFiles)
+    ? configObject.test.setupFiles
+    : [];
+
+  for (const setupFile of setupFiles) {
+    const absolute = path.isAbsolute(setupFile) ? setupFile : path.join(ROOT, setupFile);
+    await loader.executeFile(absolute);
+  }
 }
 
 function reportResults(tests) {
