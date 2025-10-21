@@ -15,6 +15,7 @@ concurrency:
 env:
   NODE_VERSION: "20"
   PNPM_VERSION: "10.5.1"
+  CSS_TRANSFORMER_WASM: "1"
 
 jobs:
   ci:
