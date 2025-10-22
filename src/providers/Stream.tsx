@@ -42,11 +42,11 @@ const useTypedStream = useStream<
 type StreamContextType = ReturnType<typeof useTypedStream>;
 const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
-async function sleep(ms = 4000) {
+export async function sleep(ms = 4000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checkGraphStatus(
+export async function checkGraphStatus(
   apiUrl: string,
   apiKey: string | null,
 ): Promise<boolean> {
