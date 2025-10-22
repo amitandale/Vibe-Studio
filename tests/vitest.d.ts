@@ -21,6 +21,11 @@ declare module "vitest" {
     mock: { calls: TArgs[] };
     mockImplementation(impl: (...args: TArgs) => TResult): void;
     mockReturnValue(value: TResult): void;
+    mockResolvedValue(value: TResult extends Promise<infer U> ? U : TResult): void;
+    mockRejectedValue(reason: unknown): void;
+    mockResolvedValueOnce(value: TResult extends Promise<infer U> ? U : TResult): void;
+    mockRejectedValueOnce(reason: unknown): void;
+    mockReset(): void;
   };
 
   export const vi: {

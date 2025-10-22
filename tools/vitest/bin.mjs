@@ -41,6 +41,23 @@ const cleanup = installGlobalApi(runtime);
 
 const plugin = createVitestPlugin(ROOT);
 
+const setupFile = path.join(ROOT, 'tests', 'setupTests.ts');
+if (fsSync.existsSync(setupFile)) {
+  const setupResult = await build({
+    entryPoints: [setupFile],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    write: false,
+    absWorkingDir: ROOT,
+    sourcemap: 'inline',
+    plugins: [plugin],
+  });
+  const setupCode = `${setupResult.outputFiles[0].text}\n//# sourceURL=${pathToFileURL(setupFile).toString()}`;
+  const setupModuleUrl = `data:text/javascript;base64,${Buffer.from(setupCode, 'utf8').toString('base64')}`;
+  await import(setupModuleUrl);
+}
+
 try {
   for (const file of testFiles) {
     await runtime.withFile(file, async () => {

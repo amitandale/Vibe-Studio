@@ -38,8 +38,13 @@ function createExpect(received) {
 
 function createMockFunction(initialImpl = () => {}) {
   let impl = initialImpl;
+  const onceQueue = [];
   const mockFn = (...args) => {
     mockFn.mock.calls.push(args);
+    if (onceQueue.length > 0) {
+      const resolver = onceQueue.shift();
+      return resolver ? resolver(...args) : impl(...args);
+    }
     return impl(...args);
   };
   mockFn.mock = {
@@ -50,6 +55,23 @@ function createMockFunction(initialImpl = () => {}) {
   };
   mockFn.mockReturnValue = (value) => {
     impl = () => value;
+  };
+  mockFn.mockResolvedValue = (value) => {
+    impl = () => Promise.resolve(value);
+  };
+  mockFn.mockRejectedValue = (reason) => {
+    impl = () => Promise.reject(reason);
+  };
+  mockFn.mockResolvedValueOnce = (value) => {
+    onceQueue.push(() => Promise.resolve(value));
+  };
+  mockFn.mockRejectedValueOnce = (reason) => {
+    onceQueue.push(() => Promise.reject(reason));
+  };
+  mockFn.mockReset = () => {
+    mockFn.mock.calls = [];
+    impl = initialImpl;
+    onceQueue.length = 0;
   };
   return mockFn;
 }
