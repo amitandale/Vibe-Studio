@@ -7,7 +7,7 @@ describe("resolvePassthroughConfig", () => {
     const config = resolvePassthroughConfig({
       LANGGRAPH_API_URL: "https://example.dev",
       LANGSMITH_API_KEY: "test-key",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(config.apiUrl).toBe("https://example.dev");
     expect(config.apiKey).toBe("test-key");
@@ -15,7 +15,7 @@ describe("resolvePassthroughConfig", () => {
   });
 
   it("falls back to remove-me when env is missing", () => {
-    const config = resolvePassthroughConfig({} as NodeJS.ProcessEnv);
+    const config = resolvePassthroughConfig({});
 
     expect(config.apiUrl).toBe("remove-me");
     expect(config.apiKey).toBe("remove-me");

@@ -4,8 +4,14 @@ export interface PassthroughConfig {
   runtime: "edge";
 }
 
+export interface PassthroughEnv {
+  LANGGRAPH_API_URL?: string;
+  LANGSMITH_API_KEY?: string;
+  [key: string]: string | undefined;
+}
+
 export function resolvePassthroughConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: PassthroughEnv = process.env,
 ): PassthroughConfig {
   return {
     apiUrl: env.LANGGRAPH_API_URL ?? "remove-me",
