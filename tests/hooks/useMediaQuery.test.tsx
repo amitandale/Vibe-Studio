@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import type { PluginBuild } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(`${process.cwd()}/vitest.config.ts`);
@@ -9,12 +10,18 @@ const { build } = require("esbuild");
 const originalWindow = typeof window === "undefined" ? undefined : window;
 const createStubWindow = () =>
   ({
-    matchMedia: () => ({
-      matches: false,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }),
-  }) as Window & typeof globalThis;
+    matchMedia: () =>
+      ({
+        matches: false,
+        media: "",
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList,
+  }) as unknown as Window & typeof globalThis;
 
 async function withWindow<T>(
   stub: Window & typeof globalThis,
@@ -164,7 +171,7 @@ async function compileHook<TExports>(
     plugins: [
       {
         name: "hook-test-mocks",
-        setup(build) {
+        setup(build: PluginBuild) {
           build.onResolve({ filter: /^@\// }, (args) => {
             if (args.path in mocks) {
               return { path: args.path, namespace: "hook-mock" };
@@ -213,18 +220,33 @@ describe("useMediaQuery", () => {
 
     const listeners: ((event: MediaQueryListEvent) => void)[] = [];
     const stubWindow = createStubWindow();
-    stubWindow.matchMedia = () => ({
-      matches: true,
-      addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
-        listeners.push(listener);
-      },
-      removeEventListener: () => {},
-    });
+    stubWindow.matchMedia = () =>
+      ({
+        matches: true,
+        media: "",
+        onchange: null,
+        addListener: (listener: (event: MediaQueryListEvent) => void) => {
+          listeners.push(listener);
+        },
+        removeListener: () => {},
+        addEventListener: (
+          _event: string,
+          listener: EventListenerOrEventListenerObject,
+        ) => {
+          const handler =
+            typeof listener === "function"
+              ? listener
+              : (event: Event) => listener.handleEvent(event);
+          listeners.push(handler as (event: MediaQueryListEvent) => void);
+        },
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
 
     await withWindow(stubWindow, async () => {
       const ctx = createContext(useMediaQuery);
       ctx.render("(min-width: 768px)");
-      ctx.render();
+      ctx.render(...ctx.args);
 
       expect(ctx.result).toBe(true);
 
@@ -245,14 +267,27 @@ describe("useMediaQuery", () => {
 
     const stubWindow = createStubWindow();
     let changeListener: ((event: MediaQueryListEvent) => void) | undefined;
-    const mediaObject = {
+    const mediaObject: MediaQueryList = {
       matches: false,
-      addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
+      media: "",
+      onchange: null,
+      addListener: (listener: (event: MediaQueryListEvent) => void) => {
         changeListener = listener;
       },
+      removeListener: () => {},
+      addEventListener: (
+        _event: string,
+        listener: EventListenerOrEventListenerObject,
+      ) => {
+        changeListener =
+          typeof listener === "function"
+            ? listener
+            : (event: Event) => listener.handleEvent(event as MediaQueryListEvent);
+      },
       removeEventListener: () => {},
+      dispatchEvent: () => false,
     };
-    stubWindow.matchMedia = () => mediaObject as MediaQueryList;
+    stubWindow.matchMedia = () => mediaObject;
 
     await withWindow(stubWindow, async () => {
       const ctx = createContext(useMediaQuery);
@@ -262,7 +297,7 @@ describe("useMediaQuery", () => {
       if (!changeListener) throw new Error("Listener not registered");
 
       changeListener({ matches: true } as MediaQueryListEvent);
-      ctx.render();
+      ctx.render(...ctx.args);
 
       expect(ctx.result).toBe(true);
 
@@ -282,13 +317,27 @@ describe("useMediaQuery", () => {
     const stubWindow = createStubWindow();
     let registeredListener: ((event: MediaQueryListEvent) => void) | undefined;
     const removeListener = vi.fn();
-    stubWindow.matchMedia = () => ({
-      matches: false,
-      addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
-        registeredListener = listener;
-      },
-      removeEventListener: removeListener,
-    });
+    stubWindow.matchMedia = () =>
+      ({
+        matches: false,
+        media: "",
+        onchange: null,
+        addListener: (listener: (event: MediaQueryListEvent) => void) => {
+          registeredListener = listener;
+        },
+        removeListener: () => {},
+        addEventListener: (
+          _event: string,
+          listener: EventListenerOrEventListenerObject,
+        ) => {
+          registeredListener =
+            typeof listener === "function"
+              ? listener
+              : (event: Event) => listener.handleEvent(event as MediaQueryListEvent);
+        },
+        removeEventListener: removeListener,
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
 
     await withWindow(stubWindow, async () => {
       const ctx = createContext(useMediaQuery);

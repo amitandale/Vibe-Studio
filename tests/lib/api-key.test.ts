@@ -23,11 +23,16 @@ describe("getApiKey", () => {
     const getItem = vi.fn(() => "secret");
     (globalThis as any).window = {
       localStorage: { getItem },
-    } as Window;
+    } as unknown as Window;
 
     expect(getApiKey()).toBe("secret");
     expect(getItem.mock.calls.length).toBe(1);
-    expect(getItem.mock.calls[0][0]).toBe("lg:chat:apiKey");
+    const firstCall: unknown[] | undefined = getItem.mock.calls[0];
+    if (!firstCall) {
+      throw new Error("Expected localStorage.getItem to be called");
+    }
+    const key = typeof firstCall[0] === "string" ? firstCall[0] : "";
+    expect(key).toBe("lg:chat:apiKey");
   });
 
   it("returns null when localStorage access throws", () => {
@@ -36,7 +41,7 @@ describe("getApiKey", () => {
     });
     (globalThis as any).window = {
       localStorage: { getItem },
-    } as Window;
+    } as unknown as Window;
 
     expect(getApiKey()).toBe(null);
   });

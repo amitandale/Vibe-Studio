@@ -1,4 +1,5 @@
 import type { ChangeEvent } from "react";
+import type { PluginBuild } from "esbuild";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -11,7 +12,7 @@ const createStubWindow = () =>
   ({
     addEventListener: () => {},
     removeEventListener: () => {},
-  }) as Window & typeof globalThis;
+  }) as unknown as Window & typeof globalThis;
 
 async function withWindow<T>(
   stub: Window & typeof globalThis,
@@ -161,7 +162,7 @@ async function compileHook<TExports>(
     plugins: [
       {
         name: "hook-test-mocks",
-        setup(build) {
+        setup(build: PluginBuild) {
           build.onResolve({ filter: /^@\// }, (args) => {
             if (args.path in mocks) {
               return { path: args.path, namespace: "hook-mock" };
@@ -270,7 +271,7 @@ describe("useFileUpload", () => {
           files: [validFile, invalidFile],
           value: "placeholder",
         },
-      } as ChangeEvent<HTMLInputElement>;
+      } as unknown as ChangeEvent<HTMLInputElement>;
 
       await ctx.result.handleFileUpload(event);
       ctx.render();
@@ -308,7 +309,7 @@ describe("useFileUpload", () => {
           files: [duplicateFile, uniqueFile],
           value: "placeholder",
         },
-      } as ChangeEvent<HTMLInputElement>;
+      } as unknown as ChangeEvent<HTMLInputElement>;
 
       await ctx.result.handleFileUpload(event);
       ctx.render();
@@ -341,7 +342,7 @@ describe("useFileUpload", () => {
           files,
           value: "placeholder",
         },
-      } as ChangeEvent<HTMLInputElement>;
+      } as unknown as ChangeEvent<HTMLInputElement>;
 
       await ctx.result.handleFileUpload(event);
       ctx.render();

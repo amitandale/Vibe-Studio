@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
+import type { ToolMessage } from "@langchain/langgraph-sdk";
+
 import {
   DO_NOT_RENDER_ID_PREFIX,
   ensureToolCallsHaveResponses,
@@ -45,13 +47,16 @@ describe("ensureToolCallsHaveResponses", () => {
       },
     ] as any[];
 
-    const result = ensureToolCallsHaveResponses(messages);
+    const result = ensureToolCallsHaveResponses(messages) as ToolMessage[];
 
     expect(result.length).toBe(1);
-    expect(result[0].tool_call_id).toBe("call-1");
-    expect(result[0].name).toBe("search");
-    expect(result[0].content).toBe("Successfully handled tool call.");
-    expect(result[0].id.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
+    const first = result[0]!;
+    expect(first.tool_call_id).toBe("call-1");
+    expect(first.name).toBe("search");
+    expect(first.content).toBe("Successfully handled tool call.");
+    const firstId = first.id ?? "";
+    expect(firstId).not.toBe("");
+    expect(firstId.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
   });
 
   it("generates ordered tool messages for multiple calls", () => {
@@ -67,14 +72,19 @@ describe("ensureToolCallsHaveResponses", () => {
       },
     ] as any[];
 
-    const result = ensureToolCallsHaveResponses(messages);
+    const result = ensureToolCallsHaveResponses(messages) as ToolMessage[];
 
     expect(result.length).toBe(2);
-    expect(result[0].tool_call_id).toBe("call-1");
-    expect(result[0].name).toBe("alpha");
-    expect(result[1].tool_call_id).toBe("call-2");
-    expect(result[1].name).toBe("beta");
-    expect(result[0].id.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
-    expect(result[1].id.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
+    const [first, second] = result;
+    expect(first!.tool_call_id).toBe("call-1");
+    expect(first!.name).toBe("alpha");
+    expect(second!.tool_call_id).toBe("call-2");
+    expect(second!.name).toBe("beta");
+    const firstId = first!.id ?? "";
+    const secondId = second!.id ?? "";
+    expect(firstId).not.toBe("");
+    expect(secondId).not.toBe("");
+    expect(firstId.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
+    expect(secondId.startsWith(DO_NOT_RENDER_ID_PREFIX)).toBe(true);
   });
 });

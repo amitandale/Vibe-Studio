@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  fileToContentBlock,
-  isBase64ContentBlock,
-  type Base64ContentBlock,
-} from "@/lib/multimodal-utils";
+import { fileToContentBlock, isBase64ContentBlock } from "@/lib/multimodal-utils";
 import { toast } from "sonner";
 
 const originalToastError = toast.error;
@@ -47,7 +43,7 @@ describe("multimodal utils", () => {
       source_type: "base64",
       mime_type: "image/png",
       data: "ZGF0YQ==",
-    } satisfies Base64ContentBlock;
+    };
 
     expect(isBase64ContentBlock(block)).toBe(true);
     expect(
