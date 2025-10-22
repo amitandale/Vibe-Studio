@@ -1,0 +1,58 @@
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_restart_command:
+        description: "Optional command to restart the application service (e.g. 'sudo systemctl restart vibe-studio'). Leave blank to skip."
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: self-hosted
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          run_install: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Next.js application
+        run: pnpm run build
+
+      - name: Prune to production dependencies
+        run: pnpm prune --prod
+
+      - name: Restart application service
+        if: ${{ inputs.service_restart_command != '' }}
+        run: |
+          set -euo pipefail
+          eval "${{ inputs.service_restart_command }}"
+
+      - name: Show deployment summary
+        if: always()
+        run: |
+          echo "Deployment completed on $(hostname) at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
