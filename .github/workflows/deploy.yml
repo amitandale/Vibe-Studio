@@ -32,10 +32,8 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          run_install: false
+      - name: Activate pnpm from packageManager field
+        run: corepack prepare $(node -p "require('./package.json').packageManager") --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
