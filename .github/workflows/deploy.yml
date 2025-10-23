@@ -35,6 +35,8 @@ jobs:
         run: pnpm prune --prod
       - name: Install PM2 globally
         run: npm install -g pm2
+      - name: Open port 3000 for application access
+        run: sudo ufw allow 3000/tcp
       - name: Restart (or start) branch app with PM2
         run: |
           pm2 delete ${{ github.ref_name }} || true
