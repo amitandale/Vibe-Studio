@@ -33,6 +33,8 @@ jobs:
         run: pnpm run build
       - name: Prune to production dependencies
         run: pnpm prune --prod
+      - name: Setup pnpm
+        run: pnpm setup
       - name: Install PM2 globally
         run: pnpm add -g pm2
       - name: Restart (or start) branch app with PM2
