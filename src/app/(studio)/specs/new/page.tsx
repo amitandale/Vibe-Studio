@@ -17,8 +17,7 @@ export default function SpecBuilderPage(): React.ReactNode {
         <p className="font-rajdhani text-xs uppercase tracking-[0.3em] text-slate-400">Spec Builder</p>
         <h1 className="mt-2 text-2xl font-semibold text-white">Compose a Spec</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Fill out the manifest fields to generate the request body used when calling <code className="text-emerald-300">POST
-          /v1/runs</code> on agent-mcp.
+          Fill out the manifest fields to generate the request body used when calling <code className="text-emerald-300">POST /v1/runs</code> on agent-mcp.
         </p>
       </header>
       <SpecBuilder />

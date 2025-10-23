@@ -4,24 +4,35 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React from "react";
 import { cn } from "@/lib/utils";
+import { useProject } from "@/providers/studio/ProjectContext";
 
-interface NavItem {
+interface BaseNavItem {
   href: string;
   label: string;
   shortcut: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const NAV_ITEMS: BaseNavItem[] = [
   { href: "/", label: "Dashboard", shortcut: "g d" },
-  { href: "/projects", label: "Projects", shortcut: "g p" },
+  { href: "/project", label: "Project", shortcut: "g p" },
   { href: "/specs", label: "Specs", shortcut: "g s" },
   { href: "/runs", label: "Runs", shortcut: "g r" },
   { href: "/artifacts", label: "Artifacts", shortcut: "g a" },
   { href: "/settings", label: "Settings", shortcut: "g ?" },
 ];
 
+export interface NavItem extends BaseNavItem {}
+
+export function getSidebarNavItems(): NavItem[] {
+  return NAV_ITEMS;
+}
+
 export function Sidebar(): React.ReactNode {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
+  const { project } = useProject();
+  const name = project?.name ?? "Loading project";
+  const items = React.useMemo(getSidebarNavItems, []);
+
   return (
     <aside className="hidden w-60 shrink-0 bg-slate-950/80 shadow-inner-right backdrop-blur md:flex md:flex-col">
       <div className="flex items-center gap-2 px-6 py-6">
@@ -30,27 +41,23 @@ export function Sidebar(): React.ReactNode {
         </div>
         <div>
           <p className="font-rajdhani text-lg font-semibold uppercase tracking-[0.18em] text-slate-100">Vibe-Studio</p>
-          <p className="text-xs text-slate-400">Spec orchestration</p>
+          <p className="text-xs text-slate-400">{name}</p>
         </div>
       </div>
       <nav className="flex-1 space-y-1 px-3">
-        {NAV_ITEMS.map((item) => {
-          const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        {items.map((item) => {
+          const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
           return (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
                 "group flex items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition",
-                isActive
-                  ? "bg-emerald-500/10 text-emerald-300"
-                  : "text-slate-300 hover:bg-slate-800/70 hover:text-white",
+                isActive ? "bg-emerald-500/10 text-emerald-300" : "text-slate-300 hover:bg-slate-800/70 hover:text-white",
               )}
             >
               <span>{item.label}</span>
-              <kbd className="rounded bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300 shadow">
-                {item.shortcut}
-              </kbd>
+              <kbd className="rounded bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300 shadow">{item.shortcut}</kbd>
             </Link>
           );
         })}

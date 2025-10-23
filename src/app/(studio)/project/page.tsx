@@ -1,15 +1,15 @@
 import React from "react";
 import Link from "next/link";
 
-export default function ProjectsPage(): React.ReactNode {
+export default function ProjectOverviewPage(): React.ReactNode {
   return (
     <div className="space-y-6">
       <header className="rounded-xl border border-slate-800/60 bg-slate-950/60 p-6">
-        <p className="font-rajdhani text-xs uppercase tracking-[0.3em] text-slate-400">Projects</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">Projects</h1>
+        <p className="font-rajdhani text-xs uppercase tracking-[0.3em] text-slate-400">Project</p>
+        <h1 className="mt-2 text-2xl font-semibold text-white">Project Overview</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Projects group related specs, runs, and artifacts. Scaffolding only—import repositories and runtime configs in
-          upcoming releases.
+          This Vibe-Studio instance manages the full lifecycle for your dedicated project VPS. Link environments, orchestrate
+          specs, and review artifacts without leaving the project scope.
         </p>
         <Link
           href="/specs/new"
@@ -19,7 +19,7 @@ export default function ProjectsPage(): React.ReactNode {
         </Link>
       </header>
       <section className="rounded-xl border border-dashed border-slate-800/60 bg-slate-950/40 p-6 text-sm text-slate-400">
-        No projects yet. Connect your workspace when server-side sync is available.
+        Project metadata syncing is coming soon. In the meantime, use the navigation to explore specs, runs, and artifacts.
       </section>
     </div>
   );
