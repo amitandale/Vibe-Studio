@@ -1,11 +1,6 @@
 name: Deploy to VPS
 on:
   workflow_dispatch:
-    inputs:
-      service_restart_command:
-        description: "Optional command to restart the application service (e.g. 'sudo systemctl restart vibe-studio'). Leave blank to skip."
-        required: false
-        default: ""
 concurrency:
   group: deploy-vps
   cancel-in-progress: false
@@ -49,3 +44,4 @@ jobs:
           echo "📦 Branch: ${{ github.ref_name }}"
           echo "📝 Commit: ${{ github.sha }}"
           echo "👤 Triggered by: ${{ github.actor }}"
+          echo "🔗 App Link: http://YOUR_VPS_IP:3000"
