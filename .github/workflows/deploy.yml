@@ -11,35 +11,75 @@ jobs:
     environment:
       name: production
     steps:
+      - name: Set deployment variables
+        id: vars
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "port=3000" >> $GITHUB_OUTPUT
+            echo "deploy_dir=/home/devops/vibe-main" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "work" ]]; then
+            echo "port=3001" >> $GITHUB_OUTPUT
+            echo "deploy_dir=/home/devops/vibe-work" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == codex/* ]]; then
+            echo "port=3002" >> $GITHUB_OUTPUT
+            echo "deploy_dir=/home/devops/vibe-codex" >> $GITHUB_OUTPUT
+          else
+            echo "port=3000" >> $GITHUB_OUTPUT
+            echo "deploy_dir=/home/devops/vibe-main" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create deployment directory
+        run: mkdir -p ${{ steps.vars.outputs.deploy_dir }}
+      
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          path: ${{ steps.vars.outputs.deploy_dir }}
+      
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      
       - name: Enable Corepack
         run: corepack enable
+      
       - name: Activate pnpm from packageManager field
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: corepack prepare $(node -p "require('./package.json').packageManager") --activate
+      
       - name: Add pnpm to PATH
         run: echo "$(corepack --help &>/dev/null && dirname $(which corepack))" >> $GITHUB_PATH
+      
       - name: Verify pnpm installation
         run: |
           which pnpm
           pnpm --version
+      
       - name: Install dependencies
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: pnpm install --frozen-lockfile
+      
       - name: Build Next.js application
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: pnpm run build
+      
       # - name: Prune to production dependencies
       #   run: pnpm prune --prod
-      - name: Open port 3000 for application access
-        run: sudo ufw allow 3000/tcp
-      - name: Restart (or start) branch app with PM2
+      
+      - name: Open port for application access
+        run: sudo ufw allow ${{ steps.vars.outputs.port }}/tcp
+      
+      - name: Stop previous PM2 process
+        run: pm2 delete ${{ github.ref_name }} || true
+      
+      - name: Start application with PM2
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
-          pm2 delete ${{ github.ref_name }} || true
-          pm2 start pnpm --name ${{ github.ref_name }} -- run start
+          PORT=${{ steps.vars.outputs.port }} pm2 start pnpm --name ${{ github.ref_name }} -- run start
           pm2 save
+      
       - name: Show deployment summary
         run: |
           PUBLIC_IP=$(curl -4 ifconfig.me)
@@ -47,4 +87,5 @@ jobs:
           echo "📦 Branch: ${{ github.ref_name }}"
           echo "📝 Commit: ${{ github.sha }}"
           echo "👤 Triggered by: ${{ github.actor }}"
-          echo "🔗 App Link: http://$PUBLIC_IP:3000"
+          echo "🔗 App Link: http://$PUBLIC_IP:${{ steps.vars.outputs.port }}"
+          echo "📁 Deploy Dir: ${{ steps.vars.outputs.deploy_dir }}"
