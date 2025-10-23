@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Vibe-Studio icon">
+  <defs>
+    <linearGradient id="vibeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0f172a" />
+  <path
+    d="M16 44l8.5-24h5L38 44h-5.2l-3.6-10.8L25.7 44H20.8l7.4-20h-1.6L20 44h-4z"
+    fill="url(#vibeGradient)"
+  />
+  <path
+    d="M43 20h5l-9 24h-5l2.7-7.3-5.4-16.7h5l3 10 3.7-10z"
+    fill="#c4f3ff"
+  />
+</svg>
