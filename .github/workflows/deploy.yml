@@ -40,8 +40,9 @@ jobs:
           pm2 save
       - name: Show deployment summary
         run: |
+          PUBLIC_IP=$(curl -s ifconfig.me)
           echo "✅ Deployment completed successfully!"
           echo "📦 Branch: ${{ github.ref_name }}"
           echo "📝 Commit: ${{ github.sha }}"
           echo "👤 Triggered by: ${{ github.actor }}"
-          echo "🔗 App Link: http://YOUR_VPS_IP:3000"
+          echo "🔗 App Link: http://$PUBLIC_IP:3000"
