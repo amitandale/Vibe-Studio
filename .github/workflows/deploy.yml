@@ -17,16 +17,16 @@ jobs:
           BRANCH="${{ github.ref_name }}"
           if [[ "$BRANCH" == "main" ]]; then
             echo "port=3000" >> $GITHUB_OUTPUT
-            echo "deploy_dir=/home/devops/vibe-main" >> $GITHUB_OUTPUT
+            echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           elif [[ "$BRANCH" == "work" ]]; then
             echo "port=3001" >> $GITHUB_OUTPUT
-            echo "deploy_dir=/home/devops/vibe-work" >> $GITHUB_OUTPUT
+            echo "deploy_dir=${{ github.workspace }}/vibe-work" >> $GITHUB_OUTPUT
           elif [[ "$BRANCH" == codex/* ]]; then
             echo "port=3002" >> $GITHUB_OUTPUT
-            echo "deploy_dir=/home/devops/vibe-codex" >> $GITHUB_OUTPUT
+            echo "deploy_dir=${{ github.workspace }}/vibe-codex" >> $GITHUB_OUTPUT
           else
             echo "port=3000" >> $GITHUB_OUTPUT
-            echo "deploy_dir=/home/devops/vibe-main" >> $GITHUB_OUTPUT
+            echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           fi
       
       - name: Create deployment directory
@@ -65,7 +65,9 @@ jobs:
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: pnpm run build
       
+      
       # - name: Prune to production dependencies
+      
       #   run: pnpm prune --prod
       
       - name: Open port for application access
