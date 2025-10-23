@@ -1,0 +1,29 @@
+.onboarding-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr) minmax(320px, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 1200px) {
+  .onboarding-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.onboarding-chat-scroll {
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
+}
+
+.onboarding-chat-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.onboarding-chat-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: rgba(148, 163, 184, 0.35);
+}
+
+.onboarding-chat-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.55);
+}

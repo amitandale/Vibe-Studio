@@ -2,7 +2,7 @@
 
 import { Run, RunCreateRequest, RunStreamEvent, ToolDescription, Artifact } from "./types";
 
-type FetchInit = RequestInit & { retryDelays?: number[] };
+type FetchInit = RequestInit & { retryDelays?: number[]; traceId?: string; query?: Record<string, string> };
 
 export interface StreamOptions {
   signal?: AbortSignal;
@@ -11,6 +11,8 @@ export interface StreamOptions {
   onEvent: (event: RunStreamEvent) => void;
   onError?: (error: unknown) => void;
   onOpen?: () => void;
+  traceId?: string;
+  projectId?: string;
 }
 
 export class AgentMcpClient {
@@ -42,16 +44,22 @@ export class AgentMcpClient {
   }
 
   async fetchArtifact(artifactId: string, init?: FetchInit): Promise<Artifact> {
-    return this.request<Artifact>(`/v1/artifacts/${encodeURIComponent(artifactId)}`, {
+    const query = init?.query ? new URLSearchParams(init.query).toString() : "";
+    const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${query ? `?${query}` : ""}`;
+    const { query: _ignored, ...rest } = init ?? {};
+    return this.request<Artifact>(path, {
       method: "GET",
-      ...init,
+      ...rest,
     });
   }
 
   async listTools(init?: FetchInit): Promise<ToolDescription[]> {
-    return this.request<ToolDescription[]>("/v1/tools", {
+    const query = init?.query ? new URLSearchParams(init.query).toString() : "";
+    const path = `/v1/tools${query ? `?${query}` : ""}`;
+    const { query: _ignored, ...rest } = init ?? {};
+    return this.request<ToolDescription[]>(path, {
       method: "GET",
-      ...init,
+      ...rest,
     });
   }
 
@@ -63,6 +71,12 @@ export class AgentMcpClient {
     const url = new URL(`${this.baseUrl}/v1/stream/${encodeURIComponent(runId)}`);
     if (options.lastEventId) {
       url.searchParams.set("last_event_id", options.lastEventId);
+    }
+    if (options.traceId) {
+      url.searchParams.set("trace_id", options.traceId);
+    }
+    if (options.projectId) {
+      url.searchParams.set("project_id", options.projectId);
     }
 
     const retryDelays = options.retryDelays ?? [500, 1500, 3000];
@@ -130,10 +144,14 @@ export class AgentMcpClient {
   }
 
   private async request<T>(path: string, init: FetchInit): Promise<T> {
-    const { retryDelays = [], ...rest } = init;
-    const headers = new Headers(init.headers);
+    const { retryDelays = [], traceId, ...rest } = init;
+    const headers = new Headers(rest.headers);
+    delete (rest as RequestInit).headers;
     if (!headers.has("Accept")) {
       headers.set("Accept", "application/json");
+    }
+    if (traceId && !headers.has("x-trace-id")) {
+      headers.set("x-trace-id", traceId);
     }
 
     const execute = async (attempt: number): Promise<T> => {

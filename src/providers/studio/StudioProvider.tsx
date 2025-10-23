@@ -13,6 +13,8 @@ interface EnvironmentContextValue {
 interface StreamOptions {
   signal?: AbortSignal;
   onError?: (error: unknown) => void;
+  traceId?: string;
+  projectId?: string;
 }
 
 interface ApiContextValue {
@@ -120,6 +122,8 @@ export function StudioProvider({ children, overrides }: StudioProviderProps): Re
           signal: options?.signal,
           onEvent: handler,
           onError: options?.onError,
+          traceId: options?.traceId,
+          projectId: options?.projectId,
         });
       },
       fetchTools: async () => {
