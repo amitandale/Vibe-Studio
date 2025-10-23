@@ -4,11 +4,8 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import {
-  ProjectContextProvider,
-  ProjectMetadata,
-  ProjectContextError,
-} from "@/providers/studio/ProjectContext";
+import { ProjectContextProvider, type ProjectContextError } from "@/providers/studio/ProjectContext";
+import type { ProjectMetadata } from "@/types/project";
 import { StudioProvider } from "@/providers/studio/StudioProvider";
 
 interface StudioShellProps {

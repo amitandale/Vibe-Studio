@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { ProjectMetadata } from "@/providers/studio/ProjectContext";
+import type { ProjectMetadata } from "@/types/project";
 
 const demoProject: ProjectMetadata = {
   id: "demo-project",

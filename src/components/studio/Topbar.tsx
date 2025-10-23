@@ -5,7 +5,7 @@ import Link from "next/link";
 import { EnvBadge } from "./EnvBadge";
 import { cn } from "@/lib/utils";
 import { useProject } from "@/providers/studio/ProjectContext";
-import type { ProjectEnvironmentStatus } from "@/providers/studio/ProjectContext";
+import type { ProjectEnvironmentStatus } from "@/types/project";
 
 export function getNewRunHref(): string {
   return "/specs/new";
