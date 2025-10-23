@@ -127,7 +127,7 @@ export class OnboardingStateMachine {
       case "TEMPLATES_LISTED":
         this.snapshot.templates = event.items;
         break;
-      case "TEMPLATES_LOCKED":
+      case "TEMPLATES_LOCKED": {
         this.snapshot.status = "Locked";
         this.snapshot.lockArtifactId = event.lock_artifact_id;
         this.snapshot.lockDigest = event.lock_digest;
@@ -150,6 +150,7 @@ export class OnboardingStateMachine {
               templates,
             };
         break;
+      }
       case "ERROR":
         this.snapshot.errors = [
           ...this.snapshot.errors,

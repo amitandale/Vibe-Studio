@@ -80,12 +80,12 @@ export function OnboardingWizard({
       "Provide your product goals, constraints, data sources, auth model, and NFRs. The advisor will draft specs and preview them live.",
     ),
   ]);
-  const [traceId, setTraceId] = React.useState<string>(() => {
+  const traceId = React.useMemo(() => {
     if (typeof window !== "undefined") {
       return readTraceId(resolvedProjectId) ?? uuidv4();
     }
     return uuidv4();
-  });
+  }, [resolvedProjectId]);
   const [pendingStep, setPendingStep] = React.useState<PendingStep>(null);
   const [errorBanner, setErrorBanner] = React.useState<string | null>(null);
   const [resetOpen, setResetOpen] = React.useState(false);
