@@ -7,7 +7,7 @@ import { fetchOnboardingManifest } from "@/lib/onboarding/server";
 type PageSearchParams = { project_id?: string | string[] | undefined };
 
 type OnboardingPageProps = {
-  searchParams?: Promise<PageSearchParams> | PageSearchParams;
+  searchParams?: Promise<PageSearchParams>;
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -55,8 +55,7 @@ function MissingBaseUrl(): React.ReactNode {
 }
 
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps): Promise<React.ReactNode> {
-  const resolvedSearchParams =
-    searchParams !== undefined ? await Promise.resolve(searchParams) : undefined;
+  const resolvedSearchParams = await searchParams;
   const queryProject =
     typeof resolvedSearchParams?.project_id === "string" ? resolvedSearchParams.project_id : undefined;
   const envProject = process.env.NEXT_PUBLIC_PROJECT_ID?.trim();
