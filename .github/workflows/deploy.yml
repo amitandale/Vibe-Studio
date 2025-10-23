@@ -42,7 +42,7 @@ jobs:
           pm2 save
       - name: Show deployment summary
         run: |
-          PUBLIC_IP=$(curl -s ifconfig.me)
+          PUBLIC_IP=$(curl -4 ifconfig.me)
           echo "✅ Deployment completed successfully!"
           echo "📦 Branch: ${{ github.ref_name }}"
           echo "📝 Commit: ${{ github.sha }}"
