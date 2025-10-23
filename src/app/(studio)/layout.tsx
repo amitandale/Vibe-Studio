@@ -1,10 +1,10 @@
 import React from "react";
 import { StudioShell } from "@/components/studio/StudioShell";
 
-export default function StudioLayout({
-  children,
-}: {
+type StudioLayoutProps = {
   children: React.ReactNode;
-}): React.ReactNode {
+};
+
+export default function StudioLayout({ children }: StudioLayoutProps): React.ReactNode {
   return <StudioShell>{children}</StudioShell>;
 }
