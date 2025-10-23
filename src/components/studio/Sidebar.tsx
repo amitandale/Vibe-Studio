@@ -21,7 +21,7 @@ const NAV_ITEMS: BaseNavItem[] = [
   { href: "/settings", label: "Settings", shortcut: "g ?" },
 ];
 
-export interface NavItem extends BaseNavItem {}
+export type NavItem = BaseNavItem;
 
 export function getSidebarNavItems(): NavItem[] {
   return NAV_ITEMS;
