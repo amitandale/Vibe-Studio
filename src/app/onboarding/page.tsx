@@ -1,28 +1,14 @@
 import { redirect } from "next/navigation";
+import type { PageProps } from "next";
 import React from "react";
 import { OnboardingWizard } from "./_components/OnboardingWizard";
 import type { OnboardingManifest } from "@/lib/onboarding/schemas";
 import { fetchOnboardingManifest } from "@/lib/onboarding/server";
 
 type PageSearchParams = { project_id?: string | string[] | undefined };
-type PageSearchParamsInput = PageSearchParams | Promise<PageSearchParams> | undefined;
 
-interface OnboardingPageProps {
-  searchParams?: PageSearchParamsInput;
-}
-
-function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
-}
-
-async function resolveSearchParams(value: PageSearchParamsInput): Promise<PageSearchParams | undefined> {
-  if (!value) {
-    return undefined;
-  }
-  if (isPromise(value)) {
-    return value;
-  }
-  return value;
+interface OnboardingPageProps extends PageProps {
+  searchParams?: Promise<PageSearchParams>;
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -70,7 +56,7 @@ function MissingBaseUrl(): React.ReactNode {
 }
 
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps): Promise<React.ReactNode> {
-  const resolvedSearchParams = await resolveSearchParams(searchParams);
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const queryProject =
     typeof resolvedSearchParams?.project_id === "string" ? resolvedSearchParams.project_id : undefined;
   const envProject = process.env.NEXT_PUBLIC_PROJECT_ID?.trim();
