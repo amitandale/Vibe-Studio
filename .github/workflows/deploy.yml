@@ -77,10 +77,12 @@ jobs:
       - name: Kill orphaned processes on port
         run: |
           PORT=${{ steps.vars.outputs.port }}
-          PIDS=$(sudo lsof -t -i :$PORT)
+          PIDS=$(sudo lsof -t -i :$PORT || true)
           if [ -n "$PIDS" ]; then
             echo "Killing old processes on port $PORT (PIDs: $PIDS)"
             sudo kill -9 $PIDS
+          else
+            echo "No processes found on port $PORT - port is clear"
           fi
 
       - name: Start application with PM2
