@@ -33,6 +33,73 @@ require_cmd() {
 
 require_cmd openssl
 require_cmd jq
+require_cmd python3
+
+docker_available=false
+if command -v docker >/dev/null 2>&1; then
+  docker_available=true
+fi
+
+resolve_image_pin() {
+  local ref="$1"
+  if [[ "$docker_available" != true ]]; then
+    echo "$ref"
+    return 0
+  fi
+
+  if docker manifest inspect "$ref" >/dev/null 2>&1; then
+    echo "$ref"
+    return 0
+  fi
+
+  local base="$ref"
+  if [[ "$ref" == *@* ]]; then
+    base="${ref%@*}"
+  fi
+
+  local manifest_json=""
+  if manifest_json=$(docker manifest inspect "$base" 2>/dev/null); then
+    local digest=""
+    digest=$(python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+candidates = []
+descriptor = data.get("Descriptor") or data.get("descriptor")
+if isinstance(descriptor, dict):
+    value = descriptor.get("digest")
+    if value:
+        candidates.append(value)
+for key in ("digest", "Digest"):
+    value = data.get(key)
+    if value:
+        candidates.append(value)
+for item in data.get("manifests", []):
+    if isinstance(item, dict):
+        value = item.get("digest") or item.get("Digest")
+        if value:
+            candidates.append(value)
+if candidates:
+    print(candidates[0])
+' <<<"$manifest_json")
+    if [[ -n "$digest" ]]; then
+      echo "${base}@${digest}"
+      return 0
+    fi
+  fi
+
+  if docker pull "$base" >/dev/null 2>&1; then
+    local repo_digest=""
+    repo_digest=$(docker image inspect "$base" --format '{{index .RepoDigests 0}}' 2>/dev/null | head -n1 || true)
+    if [[ -n "$repo_digest" ]]; then
+      echo "$repo_digest"
+      return 0
+    fi
+  fi
+
+  echo "$ref"
+}
 
 lane="$1"; shift || true
 case "$lane" in
@@ -173,6 +240,46 @@ for entry in "${image_entries[@]}"; do
   value="${entry#*=}"
   lock_images["$key"]="$value"
 done
+
+lock_updated=false
+if [[ "$docker_available" == true ]]; then
+  for key in "${!lock_images[@]}"; do
+    resolved=$(resolve_image_pin "${lock_images[$key]}")
+    if [[ -n "$resolved" && "$resolved" != "${lock_images[$key]}" ]]; then
+      lock_images["$key"]="$resolved"
+      lock_updated=true
+    fi
+  done
+fi
+
+if [[ "$lock_updated" == true ]]; then
+  tmp_map=$(mktemp)
+  for entry in "${image_entries[@]}"; do
+    key="${entry%%=*}"
+    printf '%s=%s\n' "$key" "${lock_images[$key]}" >> "$tmp_map"
+  done
+  python3 - "$images_lock" "$tmp_map" <<'PY'
+import json, os, sys
+lock_path = sys.argv[1]
+map_path = sys.argv[2]
+with open(lock_path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+images = data.setdefault('images', {})
+with open(map_path, 'r', encoding='utf-8') as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        key, value = line.split('=', 1)
+        images[key] = value
+tmp_path = lock_path + '.tmp'
+with open(tmp_path, 'w', encoding='utf-8') as fh:
+    json.dump(data, fh, indent=2)
+    fh.write('\n')
+os.replace(tmp_path, lock_path)
+PY
+  rm -f "$tmp_map"
+fi
 
 needs_update=false
 explicit_update=false
