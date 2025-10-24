@@ -71,8 +71,22 @@ jobs:
       - name: Open port for application access
         run: sudo ufw allow ${{ steps.vars.outputs.port }}/tcp
 
-      - name: Stop previous PM2 process
-        run: pm2 delete ${{ github.ref_name }} || true
+      - name: Stop previous PM2 processes
+        run: |
+          # Delete current branch if exists
+          pm2 delete ${{ github.ref_name }} || true
+          
+          # For codex branches, delete ALL other codex branches using same port
+          BRANCH="${{ github.ref_name }}"
+          if [[ "$BRANCH" == codex/* ]]; then
+            echo "Cleaning up other codex branches on port 3002..."
+            pm2 list -m | grep "name:" | grep "codex/" | sed 's/.*name: //' | while read proc_name; do
+              if [ "$proc_name" != "${{ github.ref_name }}" ]; then
+                echo "Deleting old codex process: $proc_name"
+                pm2 delete "$proc_name" || true
+              fi
+            done
+          fi
 
       - name: Kill orphaned processes on port
         run: |
