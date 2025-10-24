@@ -28,60 +28,67 @@ jobs:
             echo "port=3000" >> $GITHUB_OUTPUT
             echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: Create deployment directory
         run: mkdir -p ${{ steps.vars.outputs.deploy_dir }}
-      
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
-      
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Enable Corepack
         run: corepack enable
-      
+
       - name: Activate pnpm from packageManager field
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: corepack prepare $(node -p "require('./package.json').packageManager") --activate
-      
+
       - name: Add pnpm to PATH
         run: echo "$(corepack --help &>/dev/null && dirname $(which corepack))" >> $GITHUB_PATH
-      
+
       - name: Verify pnpm installation
         run: |
           which pnpm
           pnpm --version
-      
+
       - name: Install dependencies
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: pnpm install --frozen-lockfile
-      
+
       - name: Build Next.js application
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: pnpm run build
-      
-      
+
       # - name: Prune to production dependencies
-      
       #   run: pnpm prune --prod
-      
+
       - name: Open port for application access
         run: sudo ufw allow ${{ steps.vars.outputs.port }}/tcp
-      
+
       - name: Stop previous PM2 process
         run: pm2 delete ${{ github.ref_name }} || true
-      
+
+      - name: Kill orphaned processes on port
+        run: |
+          PORT=${{ steps.vars.outputs.port }}
+          PIDS=$(sudo lsof -t -i :$PORT)
+          if [ -n "$PIDS" ]; then
+            echo "Killing old processes on port $PORT (PIDs: $PIDS)"
+            sudo kill -9 $PIDS
+          fi
+
       - name: Start application with PM2
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
           PORT=${{ steps.vars.outputs.port }} pm2 start pnpm --name ${{ github.ref_name }} -- run start
           pm2 save
-      
+
       - name: Show deployment summary
         run: |
           PUBLIC_IP=$(curl -4 ifconfig.me)
