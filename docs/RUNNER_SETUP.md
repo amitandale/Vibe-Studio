@@ -29,7 +29,7 @@ openssl version
 - [ ] Repository checked out to deployment directory
 - [ ] `ops/supabase/lanes/*.env` created (see `scripts/supabase/provision_lane_env.sh`)
 - [ ] Unique JWT/anon/service keys generated for each lane
-- [ ] Image digests (`DB_IMAGE` … `VECTOR_IMAGE`) synced from `ops/supabase/images.lock.json`
+- [ ] Image digests (`DB_IMAGE` … `VECTOR_IMAGE`) synced via `./scripts/supabase/refresh_image_pins.sh`
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
 
@@ -49,7 +49,7 @@ Repeat for `work` and `codex` lanes adjusting ports as needed.
 
 - **Missing env file** → Run `./scripts/supabase/provision_lane_env.sh <lane>` and re-try validation.
 - **Permission denied on env file** → Ensure files are owned by the runner user and have mode `600`.
-- **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free and re-run the provisioning script to refresh image variables.
+- **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free, run `./scripts/supabase/refresh_image_pins.sh`, then rerun the provisioning script to refresh image variables.
 - **Edge runtime cannot read env** → Verify `EDGE_ENV_FILE` points to a readable file mounted on the host.
 
 See also: [Supabase Lane Setup Guide](./SUPABASE_SETUP.md).

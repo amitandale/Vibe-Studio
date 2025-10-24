@@ -16,7 +16,13 @@ Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, a
 
 1. SSH to the deployment runner.
 2. Change into the deploy checkout (see workflow output for `deploy_dir`).
-3. Generate the lane env files with strong secrets (auto password generation by default):
+3. Refresh the Supabase image pins to capture current digests:
+
+```bash
+./scripts/supabase/refresh_image_pins.sh
+```
+
+4. Generate the lane env files with strong secrets (auto password generation by default):
 
 ```bash
 ./scripts/supabase/provision_lane_env.sh main
@@ -24,7 +30,7 @@ Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, a
 ./scripts/supabase/provision_lane_env.sh codex
 ```
 
-The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placeholder JWT keys. Replace these keys with production grade values before exposing the APIs. Image digests from `ops/supabase/images.lock.json` (including `VECTOR_IMAGE`) are written into each lane env so Docker Compose always resolves the correct Supabase stack images.
+The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placeholder JWT keys. Replace these keys with production grade values before exposing the APIs. `refresh_image_pins.sh` keeps `ops/supabase/images.lock.json` (and therefore each lane env) aligned with registry digests so Docker Compose always resolves the correct Supabase stack images.
 
 ## 📘 Read Next
 

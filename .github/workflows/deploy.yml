@@ -61,6 +61,11 @@ jobs:
           echo "LANE=${lane}" >> "$GITHUB_ENV"
           echo "lane=${lane}" >> "$GITHUB_OUTPUT"
 
+      - name: Refresh Supabase image pins
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: scripts/supabase/refresh_image_pins.sh
+
       - name: Ensure lane environment is provisioned
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}

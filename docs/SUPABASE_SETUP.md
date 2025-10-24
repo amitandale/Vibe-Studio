@@ -37,7 +37,12 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Provision lane environment files** (CI will also auto-provision on first run):
+2. **Refresh image pins (optional but recommended before first boot)**:
+   ```bash
+   ./scripts/supabase/refresh_image_pins.sh
+   ```
+   This resolves each Supabase tag to the latest registry digest so your local checkout matches what CI will deploy.
+3. **Provision lane environment files** (CI will also auto-provision on first run):
    - Auto-generate strong passwords and secrets (default behaviour):
      ```bash
      ./scripts/supabase/provision_lane_env.sh main
@@ -55,23 +60,23 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-password "<strong-password>"
      ```
-3. **Replace temporary JWT keys** (recommended for production):
+4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
    - Or use the Supabase dashboard tools to mint signed keys.
    - Update the generated `.env` file values.
-4. **Start services for each lane**:
+5. **Start services for each lane**:
    ```bash
    ./scripts/supabase/lane.sh main start
    ./scripts/supabase/lane.sh work start
    ./scripts/supabase/lane.sh codex start
    ```
-5. **Verify health**:
+6. **Verify health**:
    ```bash
    ./scripts/supabase/lane.sh main health
    ./ops/bin/healthwait.sh http://127.0.0.1:8101 60
    curl -fsS http://127.0.0.1:9901/
    ```
-6. **Run migrations manually (optional)** to confirm connectivity:
+7. **Run migrations manually (optional)** to confirm connectivity:
    ```bash
    ./scripts/supabase/migrate.sh main
    ```
@@ -89,6 +94,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner.
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
+- **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env.
 - **Missing image variables (e.g. `VECTOR_IMAGE`)**: Re-run `./scripts/supabase/provision_lane_env.sh <lane> --random-pg-password`
   to refresh the lane env file from the lock file.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
