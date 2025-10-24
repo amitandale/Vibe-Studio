@@ -13,7 +13,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 compose="$root/ops/supabase/docker-compose.yml"
 envfile="$root/ops/supabase/lanes/${lane}.env"
 if [[ ! -f "$envfile" ]]; then
-  echo "lane env file $envfile missing; run scripts/supabase/provision_lane_env.sh $lane" >&2
+  echo "lane env file $envfile missing; run scripts/supabase/provision_lane_env.sh $lane --random-pg-password" >&2
   exit 1
 fi
 export ENV_FILE="$envfile"

@@ -105,15 +105,20 @@ mkdir -p "$lanes_dir"
 
 env_file="$lanes_dir/${lane}.env"
 if [[ -f "$env_file" && "$force" != true ]]; then
-  read -rp "Environment file $env_file exists. Overwrite? [y/N]: " answer
-  case "$answer" in
-    y|Y|yes|YES)
-      ;;
-    *)
-      echo "Aborted." >&2
-      exit 1
-      ;;
-  esac
+  if [[ -t 0 && -t 1 ]]; then
+    read -rp "Environment file $env_file exists. Overwrite? [y/N]: " answer || true
+    case "$answer" in
+      y|Y|yes|YES)
+        ;;
+      *)
+        echo "ℹ️  Environment file $env_file unchanged." >&2
+        exit 0
+        ;;
+    esac
+  else
+    echo "ℹ️  Environment file $env_file already exists; skipping (use --force to overwrite)." >&2
+    exit 0
+  fi
 fi
 
 case "$lane" in

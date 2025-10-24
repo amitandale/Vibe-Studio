@@ -38,39 +38,40 @@ jobs:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
       - name: Set lane from branch
+        id: lane
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
+          lane=""
           case "${GITHUB_REF_NAME}" in
             main)
-              echo "LANE=main" >> "$GITHUB_ENV"
+              lane="main"
               ;;
             work)
-              echo "LANE=work" >> "$GITHUB_ENV"
+              lane="work"
               ;;
             codex/*)
-              echo "LANE=codex" >> "$GITHUB_ENV"
+              lane="codex"
               ;;
             *)
               echo "LANE=unknown" >> "$GITHUB_ENV"
               exit 1
               ;;
           esac
+          echo "LANE=${lane}" >> "$GITHUB_ENV"
+          echo "lane=${lane}" >> "$GITHUB_OUTPUT"
 
-      - name: Provision lane environment if missing
+      - name: Ensure lane environment is provisioned
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
-        run: |
-          env_file="ops/supabase/lanes/${LANE}.env"
-          if [[ ! -f "$env_file" ]]; then
-            echo "Lane env $env_file missing. Generating secrets now."
-            scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
-          else
-            echo "Lane env $env_file already present."
-          fi
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
 
       - name: Validate lane environment exists
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: |
           if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
             echo ""
@@ -90,6 +91,8 @@ jobs:
 
       - name: Stop lane services and bring DB up
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: |
           scripts/supabase/lane.sh "$LANE" stop || true
           scripts/supabase/lane.sh "$LANE" db-only
@@ -97,21 +100,29 @@ jobs:
 
       - name: Apply DB migrations (transactional + advisory lock)
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: scripts/supabase/migrate.sh "$LANE"
 
       - name: Start lane services
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: scripts/supabase/lane.sh "$LANE" start
 
       - name: Wait for Kong health
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: |
           KONG_PORT=$(grep -E '^KONG_HTTP_PORT=' "ops/supabase/lanes/${LANE}.env" | cut -d= -f2)
           ops/bin/healthwait.sh "http://127.0.0.1:${KONG_PORT}" 120
 
       - name: Reload Edge runtime
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
         run: scripts/supabase/edge_deploy.sh "$LANE"
 
       - name: Use Node.js
