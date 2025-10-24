@@ -25,7 +25,21 @@ jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$file" | while IFS='=' rea
     exit 1
   fi
   if [[ "$docker_available" == true ]]; then
-    if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+    inspect_ref="$image"
+    if [[ "$image" == *@sha256:* ]]; then
+      digest="${image##*@}"
+      name="${image%%@*}"
+      repo="$name"
+      if [[ "$name" == *":"* ]]; then
+        after_slash="${name##*/}"
+        if [[ "$after_slash" == *":"* ]]; then
+          tag="${after_slash##*:}"
+          repo="${name%:$tag}"
+        fi
+      fi
+      inspect_ref="${repo}@${digest}"
+    fi
+    if ! docker manifest inspect "$inspect_ref" >/dev/null 2>&1; then
       base="${image%@*}"
       if docker manifest inspect "$base" >/dev/null 2>&1; then
         echo "image $key has an out-of-date digest; refresh with scripts/supabase/provision_lane_env.sh <lane> --random-pg-password --force" >&2
