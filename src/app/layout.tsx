@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Inter, Rajdhani } from "next/font/google";
 import React from "react";
@@ -34,6 +34,13 @@ export const metadata: Metadata = {
       "Design, launch, and observe MCP agents with the Vibe-Studio dashboard.",
   },
   metadataBase: new URL("https://vibe-studio.local"),
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#020617",
 };
 
 export default function RootLayout({
