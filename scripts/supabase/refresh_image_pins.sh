@@ -25,15 +25,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq is required to refresh image pins" >&2
-  exit 1
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-  echo "docker is required to refresh image pins" >&2
-  exit 1
-fi
+for dep in jq docker curl; do
+  if ! command -v "$dep" >/dev/null 2>&1; then
+    echo "$dep is required to refresh image pins" >&2
+    exit 1
+  fi
+done
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 lock_file="$root/ops/supabase/images.lock.json"
@@ -79,6 +76,78 @@ resolve_digest() {
   return 1
 }
 
+docker_hub_repo_path() {
+  local image_repo="$1"
+  if [[ "$image_repo" == *.*/* ]]; then
+    # contains an explicit registry host (e.g. public.ecr.aws) – skip fallback
+    return 1
+  fi
+  if [[ "$image_repo" == *"/"* ]]; then
+    printf '%s\n' "$image_repo"
+    return 0
+  fi
+  printf 'library/%s\n' "$image_repo"
+  return 0
+}
+
+fetch_latest_tag_from_hub() {
+  local repo_path="$1"
+  local prefix="$2"
+  local next_url="https://registry.hub.docker.com/v2/repositories/${repo_path}/tags?page_size=100&ordering=last_updated"
+  local jq_filter
+  if [[ -n "$prefix" ]]; then
+    jq_filter='(.results // []) | map(select((.name // "") | startswith($prefix))) | sort_by(.last_updated) | reverse | (.[0].name // "")'
+  else
+    jq_filter='(.results // []) | sort_by(.last_updated) | reverse | (.[0].name // "")'
+  fi
+
+  while [[ -n "$next_url" ]]; do
+    local payload
+    payload=$(curl -fsSL "$next_url" 2>/dev/null || true)
+    if [[ -z "$payload" ]]; then
+      return 1
+    fi
+    local candidate
+    candidate=$(jq -r --arg prefix "$prefix" "$jq_filter" <<<"$payload")
+    if [[ -n "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    next_url=$(jq -r '(.next // "")' <<<"$payload")
+  done
+  return 1
+}
+
+discover_fallback_tag() {
+  local repo="$1"
+  local tag="$2"
+  local repo_path
+  repo_path=$(docker_hub_repo_path "$repo") || return 1
+
+  local prefixes=()
+  local working="$tag"
+  while [[ "$working" == *.* ]]; do
+    working="${working%.*}"
+    prefixes+=("$working")
+  done
+  working="$tag"
+  while [[ "$working" == *-* ]]; do
+    working="${working%-*}"
+    prefixes+=("$working")
+  done
+  prefixes+=("")
+
+  for prefix in "${prefixes[@]}"; do
+    local candidate
+    candidate=$(fetch_latest_tag_from_hub "$repo_path" "$prefix" 2>/dev/null || true)
+    if [[ -n "$candidate" && "$candidate" != "$tag" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 mapfile -t entries < <(jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$lock_file")
 
 changed=false
@@ -94,8 +163,23 @@ for entry in "${entries[@]}"; do
     exit 1
   fi
   resolved="$(resolve_digest "$base")" || {
-    echo "failed to resolve digest for $key ($base)" >&2
-    exit 1
+    repo="${base%%:*}"
+    tag="${base##*:}"
+    if [[ -z "$repo" || -z "$tag" || "$repo" == "$base" ]]; then
+      echo "failed to resolve digest for $key ($base)" >&2
+      exit 1
+    fi
+    fallback_tag=$(discover_fallback_tag "$repo" "$tag" 2>/dev/null || true)
+    if [[ -z "$fallback_tag" ]]; then
+      echo "failed to resolve digest for $key ($base)" >&2
+      exit 1
+    fi
+    fallback_ref="$repo:$fallback_tag"
+    echo "⚠️  $key: falling back from $base to $fallback_ref" >&2
+    resolved="$(resolve_digest "$fallback_ref")" || {
+      echo "failed to resolve digest for $key using fallback $fallback_ref" >&2
+      exit 1
+    }
   }
   if [[ "$resolved" != "$current" ]]; then
     changed=true

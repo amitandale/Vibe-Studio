@@ -1,6 +1,6 @@
 {
   "images": {
-    "DB_IMAGE": "supabase/postgres:15.8.1.085@sha256:caae3d066f437332d593011e3e7ecf78ab005ce9b89378efd53f97f0410563ad",
+    "DB_IMAGE": "supabase/postgres:15.8.1.135@sha256:771a1283c295cce81b0301b53f7ad25a59be12bfaa7c95f01f2e6d69f02ab1d6",
     "AUTH_IMAGE": "supabase/gotrue:v2.180.0@sha256:55b2a88a28a4735ea21ad5237c7e03098c26d47041cf1d6914b9e6c026fe80fd",
     "REST_IMAGE": "postgrest/postgrest:v13.0.7@sha256:6d51f01dc26ce3c39267e4422516c52f555d4f20026f6e8d40ccdb5985b074b9",
     "REALTIME_IMAGE": "supabase/realtime:v2.56.0@sha256:09c38ecc5c0e524f8ac5c5f10682b33b50f6e8f8c691e2c1c73828c7fddd1a87",

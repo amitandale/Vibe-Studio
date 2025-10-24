@@ -41,7 +41,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
    ```bash
    ./scripts/supabase/refresh_image_pins.sh
    ```
-   This resolves each Supabase tag to the latest registry digest so your local checkout matches what CI will deploy.
+   This resolves each Supabase tag to the latest registry digest so your local checkout matches what CI will deploy. If Supabase removes an advertised tag (e.g. the upstream compose file references a build that never shipped), the helper automatically falls forward to the newest tag with the same prefix from Docker Hub and records the change in the lock file.
 3. **Provision lane environment files** (CI will also auto-provision on first run):
    - Auto-generate strong passwords and secrets (default behaviour):
      ```bash
@@ -94,7 +94,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner.
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
-- **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env.
+- **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env. The script will attempt to select the latest compatible Docker Hub tag when the exact version is unavailable.
 - **Missing image variables (e.g. `VECTOR_IMAGE`)**: Re-run `./scripts/supabase/provision_lane_env.sh <lane> --random-pg-password`
   to refresh the lane env file from the lock file.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
