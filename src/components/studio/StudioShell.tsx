@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { MobileDock } from "./MobileDock";
 import { ProjectContextProvider, type ProjectContextError } from "@/providers/studio/ProjectContext";
 import type { ProjectMetadata } from "@/types/project";
 import { StudioProvider } from "@/providers/studio/StudioProvider";
@@ -155,16 +156,17 @@ export function StudioShell({ children }: StudioShellProps): React.ReactNode {
         </a>
         <div className="flex min-h-screen bg-slate-950 text-slate-100">
           <Sidebar />
-          <div className="flex flex-1 flex-col">
-            <Topbar />
+          <div className="relative flex flex-1 flex-col">
+            <Topbar className="sticky top-0 z-40" />
             <main
               id="studio-main"
-              className="flex-1 overflow-y-auto bg-gradient-to-b from-slate-950 via-slate-950/80 to-slate-900 px-4 py-6 md:px-10"
+              className="flex-1 overflow-y-auto bg-gradient-to-b from-slate-950 via-slate-950/85 to-slate-900 px-4 pb-28 pt-6 md:px-10 md:pb-12"
             >
               <div className="mx-auto w-full max-w-5xl space-y-8">{children}</div>
             </main>
           </div>
         </div>
+        <MobileDock />
       </StudioProvider>
     </ProjectContextProvider>
   );

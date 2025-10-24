@@ -65,47 +65,65 @@ export function Topbar({ className }: { className?: string }): React.ReactNode {
   return (
     <header
       className={cn(
-        "flex flex-col gap-3 border-b border-slate-800/60 bg-slate-950/70 px-4 py-4 backdrop-blur sm:h-16 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0",
+        "w-full border-b border-slate-800/70 bg-slate-950/80 px-4 py-4 text-sm backdrop-blur md:px-6",
         className,
       )}
     >
-      <div className="flex items-center gap-3 sm:gap-4">
-        <MobileNav
-          projectName={project?.name ?? "Vibe-Studio"}
-          projectSubtitle={project?.vps?.ipAddress ?? project?.repository?.name ?? null}
-        />
-        <button
-          type="button"
-          className="group inline-flex w-full items-center gap-2 rounded-md border border-slate-800/80 bg-slate-900/60 px-3 py-1.5 text-sm font-medium text-slate-200 transition hover:border-slate-700 hover:bg-slate-800 sm:w-auto"
-        >
-          <span className={cn("h-2 w-2 rounded-full", statusColor)} aria-hidden />
-          <span className="truncate">{project?.name ?? "Loading project"}</span>
-          <span className="hidden text-xs text-slate-400 md:inline">{project?.vps?.ipAddress ?? ""}</span>
-        </button>
-        <div className="hidden items-center gap-3 md:flex">
-          <span className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs uppercase tracking-wide text-slate-400">
-            {repository?.name ?? "Repo syncing"}
-          </span>
-          <span className="text-xs text-slate-500">Branch {project?.activeBranch ?? "..."}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start gap-3 sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <MobileNav
+              projectName={project?.name ?? "Vibe-Studio"}
+              projectSubtitle={project?.vps?.ipAddress ?? project?.repository?.name ?? null}
+            />
+            <div className="flex min-w-0 flex-1 flex-col gap-2 rounded-xl border border-slate-800/80 bg-slate-900/60 px-3 py-2 sm:px-4">
+              <div className="flex items-center gap-2 text-slate-200">
+                <span className={cn("h-2 w-2 rounded-full", statusColor)} aria-hidden />
+                <p className="truncate text-base font-semibold">
+                  {project?.name ?? "Loading project"}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+                <span className="rounded-full border border-slate-800/70 bg-slate-950/50 px-2 py-1 uppercase tracking-wide">
+                  {repository?.name ?? "Repo syncing"}
+                </span>
+                <span className="whitespace-nowrap">Branch {project?.activeBranch ?? "..."}</span>
+                {project?.vps?.ipAddress ? (
+                  <span className="whitespace-nowrap text-slate-500">{project.vps.ipAddress}</span>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:justify-end sm:gap-4">
-        <div className="hidden items-center gap-3 md:flex">
-          <span className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-400">
-            Trace {traceId ?? "not set"}
-          </span>
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-400">
+
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+          <div className="flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
+            <span className="font-semibold text-slate-100">Trace</span>
+            <span className="truncate">{traceId ?? "not set"}</span>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs capitalize text-slate-300 md:hidden">
             <span className={cn("h-2 w-2 rounded-full", getEnvironmentStatusColor(environment.status))} aria-hidden />
-            {environment.status.toLowerCase()} {environment.latencyMs ? `• ${environment.latencyMs} ms` : ""}
-          </span>
+            <span>{environment.status.toLowerCase()}</span>
+            {environment.latencyMs ? <span className="text-[10px] text-slate-400">• {environment.latencyMs} ms</span> : null}
+          </div>
+          <div className="md:hidden">
+            <EnvBadge />
+          </div>
+          <div className="hidden items-center gap-3 md:flex">
+            <span className="inline-flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
+              <span className={cn("h-2 w-2 rounded-full", getEnvironmentStatusColor(environment.status))} aria-hidden />
+              {environment.status.toLowerCase()}
+              {environment.latencyMs ? <span className="text-[10px] text-slate-400">• {environment.latencyMs} ms</span> : null}
+            </span>
+            <EnvBadge />
+          </div>
+          <Link
+            href={getNewRunHref()}
+            className="inline-flex flex-1 items-center justify-center rounded-md border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20 sm:flex-initial"
+          >
+            New Run
+          </Link>
         </div>
-        <EnvBadge />
-        <Link
-          href={getNewRunHref()}
-          className="inline-flex w-full items-center justify-center rounded-md border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20 sm:w-auto"
-        >
-          New Run
-        </Link>
       </div>
     </header>
   );
