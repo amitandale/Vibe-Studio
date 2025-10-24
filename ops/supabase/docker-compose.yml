@@ -10,7 +10,7 @@ services:
     ports:
       - "${PGPORT}:5432"
     volumes:
-      - "supa-${VOL_NS}-db:/var/lib/postgresql/data"
+      - db-data:/var/lib/postgresql/data
 
   auth:
     image: ${AUTH_IMAGE:?}
@@ -71,4 +71,5 @@ services:
       - "${KONG_HTTP_PORT}:8000"
 
 volumes:
-  supa-${VOL_NS}-db:
+  db-data:
+    name: supa-${VOL_NS}-db
