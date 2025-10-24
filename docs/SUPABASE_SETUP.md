@@ -1,0 +1,92 @@
+# Supabase Lane Setup Guide
+
+This document walks you through provisioning and maintaining the self-hosted Supabase stacks that power the `main`, `work`, and `codex` lanes.
+
+## ✅ Prerequisites
+
+Install these utilities on the runner before provisioning Supabase services:
+
+- Docker Engine 24+
+- Docker Compose (plugin)
+- PostgreSQL client tools (`psql`, `pg_isready`)
+- `jq`
+- `python3`
+- `curl`
+- `openssl`
+
+Verify availability:
+
+```bash
+which docker docker compose psql jq python3 curl openssl
+```
+
+## 🏗️ Architecture Overview
+
+Each Git branch class maps to its own long-lived Supabase lane. Every lane runs its own Compose project containing PostgreSQL, GoTrue auth, PostgREST, Realtime, Storage API, Imgproxy, optional Vector, Edge runtime, and Kong. Volumes, ports, and API keys are isolated so deployments do not interfere with each other.
+
+## 🔢 Port Allocation
+
+| Lane  | PGPORT | KONG_HTTP_PORT | EDGE_PORT |
+|-------|:------:|:--------------:|:---------:|
+| main  |  5433  |      8101      |    9901   |
+| work  |  5434  |      8102      |    9902   |
+| codex |  5435  |      8103      |    9903   |
+
+Volumes follow the pattern `supa-<lane>-db` and Compose project names default to `supa-<lane>`.
+
+## 🚀 Initial Setup Steps
+
+1. **Clone the repository onto the runner** (or reuse the deployment checkout).
+2. **Provision lane environment files**:
+   - Interactive password entry:
+     ```bash
+     ./scripts/supabase/provision_lane_env.sh main --interactive
+     ./scripts/supabase/provision_lane_env.sh work --interactive
+     ./scripts/supabase/provision_lane_env.sh codex --interactive
+     ```
+   - Non-interactive invocation:
+     ```bash
+     ./scripts/supabase/provision_lane_env.sh main --pg-password "<strong-password>"
+     ```
+3. **Replace temporary JWT keys** (recommended for production):
+   - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
+   - Or use the Supabase dashboard tools to mint signed keys.
+   - Update the generated `.env` file values.
+4. **Start services for each lane**:
+   ```bash
+   ./scripts/supabase/lane.sh main start
+   ./scripts/supabase/lane.sh work start
+   ./scripts/supabase/lane.sh codex start
+   ```
+5. **Verify health**:
+   ```bash
+   ./scripts/supabase/lane.sh main health
+   ./ops/bin/healthwait.sh http://127.0.0.1:8101 60
+   curl -fsS http://127.0.0.1:9901/
+   ```
+6. **Run migrations manually (optional)** to confirm connectivity:
+   ```bash
+   ./scripts/supabase/migrate.sh main
+   ```
+
+## 🔐 Security Best Practices
+
+- Never commit the generated `ops/supabase/lanes/*.env` files (they are gitignored).
+- Generated secrets are placeholders—replace them with signed keys managed by your secret rotation tooling.
+- Keep file permissions strict (`600`) and restrict runner access.
+- Rotate `PGPASSWORD`, `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` regularly.
+- Store canonical secrets in your runner’s secret store (e.g., Ansible vault, 1Password CLI) and re-run the provisioning script with `--pg-password` when rotating.
+
+## 🛠️ Troubleshooting
+
+- **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane> --interactive` on the runner.
+- **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
+- **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
+- **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
+- **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
+
+## 📚 References
+
+- [Supabase Self-Hosting Documentation](https://supabase.com/docs/guides/self-hosting)
+- [Supabase CLI Reference](https://supabase.com/docs/guides/cli)
+- [Project Runner Setup](./RUNNER_SETUP.md)

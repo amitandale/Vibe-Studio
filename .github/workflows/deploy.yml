@@ -57,6 +57,21 @@ jobs:
               ;;
           esac
 
+      - name: Validate lane environment exists
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
+            echo ""
+            echo "🚨 Lane environment not configured!"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --interactive"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
       - name: Validate Supabase image lock
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: ops/bin/validate-lock.sh ops/supabase/images.lock.json
