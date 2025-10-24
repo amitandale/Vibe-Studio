@@ -44,6 +44,8 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ./scripts/supabase/provision_lane_env.sh work
      ./scripts/supabase/provision_lane_env.sh codex
      ```
+     The script keeps digest-pinned image references (e.g. `VECTOR_IMAGE`) in sync with `ops/supabase/images.lock.json` so new
+     containers launch with the expected versions.
    - Add `--random-pg-password` to request random password generation explicitly (the deploy workflow does this automatically).
    - Interactive password entry:
      ```bash
@@ -87,6 +89,8 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner.
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
+- **Missing image variables (e.g. `VECTOR_IMAGE`)**: Re-run `./scripts/supabase/provision_lane_env.sh <lane> --random-pg-password`
+  to refresh the lane env file from the lock file.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

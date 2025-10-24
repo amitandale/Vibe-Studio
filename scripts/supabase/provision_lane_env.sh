@@ -32,6 +32,7 @@ require_cmd() {
 }
 
 require_cmd openssl
+require_cmd jq
 
 lane="$1"; shift || true
 case "$lane" in
@@ -81,44 +82,25 @@ done
 
 generated_password=false
 
-if [[ -z "$pg_password" ]]; then
-  if [[ "$interactive" == true ]]; then
-    read -rsp "Enter Postgres password for lane '$lane': " pg_password
-    echo
-    if [[ -z "$pg_password" ]]; then
-      echo "password cannot be empty" >&2
-      exit 2
-    fi
-  else
-    auto_password=true
-  fi
-fi
-
-if [[ "$auto_password" == true && -z "$pg_password" ]]; then
-  pg_password="$(openssl rand -hex 32)"
-  generated_password=true
-fi
-
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 lanes_dir="$root/ops/supabase/lanes"
 mkdir -p "$lanes_dir"
 
 env_file="$lanes_dir/${lane}.env"
-if [[ -f "$env_file" && "$force" != true ]]; then
-  if [[ -t 0 && -t 1 ]]; then
-    read -rp "Environment file $env_file exists. Overwrite? [y/N]: " answer || true
-    case "$answer" in
-      y|Y|yes|YES)
-        ;;
-      *)
-        echo "ℹ️  Environment file $env_file unchanged." >&2
-        exit 0
-        ;;
-    esac
-  else
-    echo "ℹ️  Environment file $env_file already exists; skipping (use --force to overwrite)." >&2
-    exit 0
-  fi
+
+existing_pg_password=""
+existing_edge_env_file=""
+existing_jwt_secret=""
+existing_anon_key=""
+existing_service_key=""
+if [[ -f "$env_file" ]]; then
+  # shellcheck disable=SC1090
+  set -a; source "$env_file"; set +a
+  existing_pg_password="${PGPASSWORD:-}"
+  existing_edge_env_file="${EDGE_ENV_FILE:-}"
+  existing_jwt_secret="${JWT_SECRET:-}"
+  existing_anon_key="${ANON_KEY:-}"
+  existing_service_key="${SERVICE_ROLE_KEY:-}"
 fi
 
 case "$lane" in
@@ -146,16 +128,115 @@ case "$lane" in
   *)
     echo "unsupported lane '$lane'" >&2
     exit 2
-    ;;
+    ;; 
 esac
 
 if [[ -z "$edge_env_file" ]]; then
-  edge_env_file="$default_edge_env"
+  if [[ -n "$existing_edge_env_file" ]]; then
+    edge_env_file="$existing_edge_env_file"
+  else
+    edge_env_file="$default_edge_env"
+  fi
 fi
 
-jwt_secret="$(openssl rand -base64 32)"
-anon_key="$(openssl rand -hex 32)"
-service_role_key="$(openssl rand -hex 32)"
+if [[ -z "$pg_password" ]]; then
+  if [[ -n "$existing_pg_password" ]]; then
+    pg_password="$existing_pg_password"
+  elif [[ "$interactive" == true ]]; then
+    read -rsp "Enter Postgres password for lane '$lane': " pg_password
+    echo
+    if [[ -z "$pg_password" ]]; then
+      echo "password cannot be empty" >&2
+      exit 2
+    fi
+  else
+    auto_password=true
+  fi
+fi
+
+if [[ "$auto_password" == true && -z "$pg_password" ]]; then
+  pg_password="$(openssl rand -hex 32)"
+  generated_password=true
+fi
+
+images_lock="$root/ops/supabase/images.lock.json"
+if [[ ! -f "$images_lock" ]]; then
+  echo "images lock file $images_lock not found" >&2
+  exit 1
+fi
+
+mapfile -t image_entries < <(jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$images_lock")
+
+declare -A lock_images=()
+for entry in "${image_entries[@]}"; do
+  key="${entry%%=*}"
+  value="${entry#*=}"
+  lock_images["$key"]="$value"
+done
+
+needs_update=false
+explicit_update=false
+if [[ -n "$pg_password" && -z "$existing_pg_password" ]]; then
+  needs_update=true
+elif [[ -n "$pg_password" && "$pg_password" != "$existing_pg_password" ]]; then
+  explicit_update=true
+fi
+
+if [[ -n "$edge_env_file" && "$edge_env_file" != "$existing_edge_env_file" ]]; then
+  explicit_update=true
+fi
+
+required_vars=(
+  COMPOSE_PROJECT_NAME LANE VOL_NS
+  PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD
+  KONG_HTTP_PORT EDGE_PORT EDGE_ENV_FILE
+  JWT_SECRET ANON_KEY SERVICE_ROLE_KEY
+)
+
+image_vars=(DB_IMAGE AUTH_IMAGE REST_IMAGE REALTIME_IMAGE STORAGE_IMAGE IMGPROXY_IMAGE VECTOR_IMAGE EDGE_IMAGE KONG_IMAGE)
+
+if [[ -f "$env_file" ]]; then
+  for var in "${required_vars[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      needs_update=true
+      break
+    fi
+  done
+  for var in "${image_vars[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      needs_update=true
+      break
+    fi
+    if [[ "${!var}" != "${lock_images[$var]}" ]]; then
+      needs_update=true
+      break
+    fi
+  done
+fi
+
+if [[ ! -f "$env_file" ]]; then
+  needs_update=true
+fi
+
+if [[ "$force" != true && "$needs_update" != true && "$explicit_update" != true ]]; then
+  echo "ℹ️  Environment file $env_file already satisfies requirements; skipping." >&2
+  exit 0
+fi
+
+jwt_secret="$existing_jwt_secret"
+if [[ -z "$jwt_secret" ]]; then
+  jwt_secret="$(openssl rand -base64 32)"
+fi
+
+anon_key="$existing_anon_key"
+if [[ -z "$anon_key" ]]; then
+  anon_key="$(openssl rand -hex 32)"
+fi
+
+service_role_key="$existing_service_key"
+if [[ -z "$service_role_key" ]]; then
+  service_role_key="$(openssl rand -hex 32)"
+fi
 
 old_umask="$(umask)"
 umask 177
@@ -178,6 +259,17 @@ EDGE_ENV_FILE=${edge_env_file}
 JWT_SECRET=${jwt_secret}
 ANON_KEY=${anon_key}
 SERVICE_ROLE_KEY=${service_role_key}
+
+# Image pins (managed via ops/supabase/images.lock.json)
+DB_IMAGE=${lock_images[DB_IMAGE]}
+AUTH_IMAGE=${lock_images[AUTH_IMAGE]}
+REST_IMAGE=${lock_images[REST_IMAGE]}
+REALTIME_IMAGE=${lock_images[REALTIME_IMAGE]}
+STORAGE_IMAGE=${lock_images[STORAGE_IMAGE]}
+IMGPROXY_IMAGE=${lock_images[IMGPROXY_IMAGE]}
+VECTOR_IMAGE=${lock_images[VECTOR_IMAGE]}
+EDGE_IMAGE=${lock_images[EDGE_IMAGE]}
+KONG_IMAGE=${lock_images[KONG_IMAGE]}
 ENV
 chmod 600 "$env_file"
 umask "$old_umask"

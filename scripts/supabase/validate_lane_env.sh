@@ -56,6 +56,15 @@ required_vars=(
   JWT_SECRET
   ANON_KEY
   SERVICE_ROLE_KEY
+  DB_IMAGE
+  AUTH_IMAGE
+  REST_IMAGE
+  REALTIME_IMAGE
+  STORAGE_IMAGE
+  IMGPROXY_IMAGE
+  VECTOR_IMAGE
+  EDGE_IMAGE
+  KONG_IMAGE
 )
 
 missing=()
@@ -72,6 +81,16 @@ fi
 weak_regex='(changeme|password|test|example|temp|secret)'
 if [[ "${PGPASSWORD,,}" =~ $weak_regex ]]; then
   echo "⚠️  PGPASSWORD appears weak (${PGPASSWORD}). Replace it with a strong unique password." >&2
+fi
+
+images_lock="$root/ops/supabase/images.lock.json"
+if command -v jq >/dev/null 2>&1 && [[ -f "$images_lock" ]]; then
+  while IFS='=' read -r key expected; do
+    current="${!key:-}"
+    if [[ "$current" != "$expected" ]]; then
+      fail "$key in $env_file does not match lock file." "Expected $expected"
+    fi
+  done < <(jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$images_lock")
 fi
 
 echo "✅ Lane '$lane' environment validated."

@@ -24,7 +24,7 @@ Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, a
 ./scripts/supabase/provision_lane_env.sh codex
 ```
 
-The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placeholder JWT keys. Replace these keys with production grade values before exposing the APIs.
+The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placeholder JWT keys. Replace these keys with production grade values before exposing the APIs. Image digests from `ops/supabase/images.lock.json` (including `VECTOR_IMAGE`) are written into each lane env so Docker Compose always resolves the correct Supabase stack images.
 
 ## 📘 Read Next
 
