@@ -55,6 +55,7 @@ export interface Artifact {
   updated_at: string;
   url?: string;
   metadata?: Record<string, unknown>;
+  content?: unknown;
 }
 
 export interface ToolDescription {
