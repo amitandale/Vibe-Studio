@@ -16,12 +16,12 @@ Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, a
 
 1. SSH to the deployment runner.
 2. Change into the deploy checkout (see workflow output for `deploy_dir`).
-3. Generate the lane env files with strong secrets:
+3. Generate the lane env files with strong secrets (auto password generation by default):
 
 ```bash
-./scripts/supabase/provision_lane_env.sh main --interactive
-./scripts/supabase/provision_lane_env.sh work --interactive
-./scripts/supabase/provision_lane_env.sh codex --interactive
+./scripts/supabase/provision_lane_env.sh main
+./scripts/supabase/provision_lane_env.sh work
+./scripts/supabase/provision_lane_env.sh codex
 ```
 
 The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placeholder JWT keys. Replace these keys with production grade values before exposing the APIs.

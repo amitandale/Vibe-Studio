@@ -57,6 +57,18 @@ jobs:
               ;;
           esac
 
+      - name: Provision lane environment if missing
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          env_file="ops/supabase/lanes/${LANE}.env"
+          if [[ ! -f "$env_file" ]]; then
+            echo "Lane env $env_file missing. Generating secrets now."
+            scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
+          else
+            echo "Lane env $env_file already present."
+          fi
+
       - name: Validate lane environment exists
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
@@ -66,7 +78,7 @@ jobs:
             echo ""
             echo "To fix this, SSH to the runner and run:"
             echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
-            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --interactive"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --random-pg-password"
             echo ""
             echo "See docs/SUPABASE_SETUP.md for complete instructions."
             exit 1

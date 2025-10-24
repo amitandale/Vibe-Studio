@@ -3,13 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: provision_lane_env.sh <lane> [--interactive] [--pg-password VALUE] [--edge-env-file PATH] [--force]
+Usage: provision_lane_env.sh <lane> [--interactive] [--pg-password VALUE] [--random-pg-password] [--edge-env-file PATH] [--force]
 
 Provision a Supabase lane environment file with random secrets.
 
 Options:
   --interactive           Securely prompt for the Postgres password (ignored if --pg-password is provided)
   --pg-password VALUE     Provide the Postgres password non-interactively
+  --random-pg-password    Generate a strong Postgres password automatically (default when no password provided)
   --edge-env-file PATH    Override the default edge runtime env file path
   --force                 Overwrite the existing env file without prompting
   -h, --help              Show this help message
@@ -43,6 +44,7 @@ case "$lane" in
 esac
 
 interactive=false
+auto_password=false
 pg_password=""
 edge_env_file=""
 force=false
@@ -65,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       force=true
       shift
       ;;
+    --random-pg-password)
+      auto_password=true
+      shift
+      ;;
     *)
       echo "unknown option '$1'" >&2
       usage
@@ -72,6 +78,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+generated_password=false
 
 if [[ -z "$pg_password" ]]; then
   if [[ "$interactive" == true ]]; then
@@ -82,9 +90,13 @@ if [[ -z "$pg_password" ]]; then
       exit 2
     fi
   else
-    echo "--pg-password is required (or use --interactive)" >&2
-    exit 2
+    auto_password=true
   fi
+fi
+
+if [[ "$auto_password" == true && -z "$pg_password" ]]; then
+  pg_password="$(openssl rand -hex 32)"
+  generated_password=true
 fi
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -164,6 +176,10 @@ SERVICE_ROLE_KEY=${service_role_key}
 ENV
 chmod 600 "$env_file"
 umask "$old_umask"
+
+if [[ "$generated_password" == true ]]; then
+  echo "ℹ️  Generated a random Postgres password for lane '$lane'. The value is stored inside $env_file." >&2
+fi
 
 cat <<'NOTE'
 ⚠️  Temporary Supabase API keys generated. Replace JWT_SECRET, ANON_KEY, and SERVICE_ROLE_KEY with production keys issued by your Supabase tooling before going live.

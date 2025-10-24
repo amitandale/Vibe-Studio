@@ -37,14 +37,19 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Provision lane environment files**:
+2. **Provision lane environment files** (CI will also auto-provision on first run):
+   - Auto-generate strong passwords and secrets (default behaviour):
+     ```bash
+     ./scripts/supabase/provision_lane_env.sh main
+     ./scripts/supabase/provision_lane_env.sh work
+     ./scripts/supabase/provision_lane_env.sh codex
+     ```
+   - Add `--random-pg-password` to request random password generation explicitly (the deploy workflow does this automatically).
    - Interactive password entry:
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --interactive
-     ./scripts/supabase/provision_lane_env.sh work --interactive
-     ./scripts/supabase/provision_lane_env.sh codex --interactive
      ```
-   - Non-interactive invocation:
+   - Non-interactive custom password:
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-password "<strong-password>"
      ```
@@ -79,7 +84,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 
 ## 🛠️ Troubleshooting
 
-- **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane> --interactive` on the runner.
+- **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner.
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.

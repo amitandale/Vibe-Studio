@@ -46,7 +46,7 @@ Repeat for `work` and `codex` lanes adjusting ports as needed.
 
 ## ❗ Common Issues
 
-- **Missing env file** → Run the provisioning script and re-try validation.
+- **Missing env file** → Run `./scripts/supabase/provision_lane_env.sh <lane>` and re-try validation.
 - **Permission denied on env file** → Ensure files are owned by the runner user and have mode `600`.
 - **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free.
 - **Edge runtime cannot read env** → Verify `EDGE_ENV_FILE` points to a readable file mounted on the host.

@@ -31,7 +31,7 @@ fail() {
 }
 
 if [[ ! -f "$env_file" ]]; then
-  fail "Lane environment file $env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane --interactive on the runner."
+  fail "Lane environment file $env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane on the runner."
 fi
 
 if grep -q '{{' "$env_file"; then
