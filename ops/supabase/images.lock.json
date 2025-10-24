@@ -1,0 +1,13 @@
+{
+  "images": {
+    "DB_IMAGE": "supabase/postgres:15.1.1.20@sha256:2c8e44b8f5c96c3a49f3e63f983f997a0b5c21a8390d4e8c1d5c4a1a4f59b5f2",
+    "AUTH_IMAGE": "supabase/gotrue:v2.128.5@sha256:3f92f493ac2b6534c9c5d3fb0b78643ba6f92f863deec95bf2c98b5eb2d287a2",
+    "REST_IMAGE": "supabase/postgrest:v12.1.0@sha256:5c5e1193d0f05f0b4683ebc98d5358cd8a6715493f8f0939ba84a4d8a36e94c0",
+    "REALTIME_IMAGE": "supabase/realtime:v2.21.4@sha256:39fba98b7a36f8f188045a8ca8f5d8f68a0bbd0fcbf6b7da53b5f3aa5c781e57",
+    "STORAGE_IMAGE": "supabase/storage-api:v0.47.6@sha256:f847a3c77d121cd5c5ea000ae3fdd3a10f26fcd59ed4b3d76d0ef9cd83d695d5",
+    "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.15.1@sha256:db2d1a8397a9f82d5f2523e7ddf3c8601b8d4b1661df94f04fdf46b3ca0a3a52",
+    "VECTOR_IMAGE": "supabase/vector:v1.8.2@sha256:71d35189c22d6a0f07fdf8f70358b39b05f56c1840c6a2a3016b0e0af524b30f",
+    "EDGE_IMAGE": "supabase/edge-runtime:v1.49.3@sha256:af3523d4f21a5b0cb289b3d1c4c0ede4e6d72d0fd7aa320c6f4c0e3e5d5efbb9",
+    "KONG_IMAGE": "kong:3.4.3@sha256:b6fc5fbc56cbe341b83cfac3a7c33dcb162d432c50b0f1adf7eecca40f6d2770"
+  }
+}

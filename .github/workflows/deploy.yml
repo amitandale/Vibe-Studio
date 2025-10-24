@@ -37,6 +37,56 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
+      - name: Set lane from branch
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main)
+              echo "LANE=main" >> "$GITHUB_ENV"
+              ;;
+            work)
+              echo "LANE=work" >> "$GITHUB_ENV"
+              ;;
+            codex/*)
+              echo "LANE=codex" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "LANE=unknown" >> "$GITHUB_ENV"
+              exit 1
+              ;;
+          esac
+
+      - name: Validate Supabase image lock
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: ops/bin/validate-lock.sh ops/supabase/images.lock.json
+
+      - name: Stop lane services and bring DB up
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          scripts/supabase/lane.sh "$LANE" stop || true
+          scripts/supabase/lane.sh "$LANE" db-only
+          scripts/supabase/lane.sh "$LANE" health
+
+      - name: Apply DB migrations (transactional + advisory lock)
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: scripts/supabase/migrate.sh "$LANE"
+
+      - name: Start lane services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: scripts/supabase/lane.sh "$LANE" start
+
+      - name: Wait for Kong health
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          KONG_PORT=$(grep -E '^KONG_HTTP_PORT=' "ops/supabase/lanes/${LANE}.env" | cut -d= -f2)
+          ops/bin/healthwait.sh "http://127.0.0.1:${KONG_PORT}" 120
+
+      - name: Reload Edge runtime
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: scripts/supabase/edge_deploy.sh "$LANE"
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
