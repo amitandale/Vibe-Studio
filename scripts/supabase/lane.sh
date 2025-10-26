@@ -29,6 +29,15 @@ fi
 super_role="${SUPABASE_SUPER_ROLE:-${PGUSER:-}}"
 super_password="${SUPABASE_SUPER_PASSWORD:-${PGPASSWORD:-}}"
 
+warn_superuser_config() {
+  cat >&2 <<MSG
+⚠️  Unable to connect with the configured Supabase superuser credentials for lane '$lane'.
+   Provide the correct values with:
+     scripts/supabase/provision_lane_env.sh $lane \\
+       --pg-super-role <role> --pg-super-password <password>
+MSG
+}
+
 run_pg_isready() {
   local user="$1"
   local password="$2"
@@ -40,6 +49,27 @@ run_pg_isready() {
   else
     pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
   fi
+}
+
+wait_for_user() {
+  local user="$1"
+  local password="$2"
+  local attempts="${3:-30}"
+  local delay="${4:-2}"
+
+  if [[ -z "$user" ]]; then
+    return 1
+  fi
+
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if run_pg_isready "$user" "$password" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  run_pg_isready "$user" "$password"
 }
 
 ensure_pg_role() {
@@ -54,15 +84,19 @@ ensure_pg_role() {
     echo "⚠️  Cannot verify role '$target_role' because SUPABASE_SUPER_ROLE or SUPABASE_SUPER_PASSWORD is unset." >&2
     return 1
   fi
-  local result
-  result=$("${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
-    psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${target_role}'" 2>/dev/null || true)
+  local result=""
+  if ! result=$("${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
+      psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${target_role}'" 2>/dev/null); then
+    warn_superuser_config
+    return 1
+  fi
+  result="$(tr -d '[:space:]' <<<"$result")"
   if [[ "$result" == "1" ]]; then
     return 0
   fi
-  "${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
-    psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres \
-    -v target_role="$target_role" -v target_password="$PGPASSWORD" <<'SQL'
+  if ! "${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
+      psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres \
+      -v target_role="$target_role" -v target_password="$PGPASSWORD" <<'SQL'; then
 DO $$
 DECLARE
   role_name text := :'target_role';
@@ -74,29 +108,25 @@ BEGIN
 END
 $$;
 SQL
+    warn_superuser_config
+    return 1
+  fi
   echo "ℹ️  Ensured Postgres role '$target_role' exists using superuser '$super_role'." >&2
 }
 
 wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
-  local i
-  for ((i = 1; i <= attempts; i++)); do
-    if run_pg_isready "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1; then
-      return 0
+
+  if [[ -n "$super_role" && -n "$super_password" && "$super_role" != "$PGUSER" ]]; then
+    if ! wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
+      warn_superuser_config
+    else
+      ensure_pg_role || true
     fi
-    if [[ -n "$super_role" && "$super_role" != "$PGUSER" && -n "$super_password" ]]; then
-      if run_pg_isready "$super_role" "$super_password" >/dev/null 2>&1; then
-        if ensure_pg_role; then
-          if run_pg_isready "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1; then
-            return 0
-          fi
-        fi
-      fi
-    fi
-    sleep "$delay"
-  done
-  run_pg_isready "$PGUSER" "$PGPASSWORD"
+  fi
+
+  wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay"
 }
 case "$cmd" in
   start)
