@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: provision_lane_env.sh <lane> [--interactive] [--pg-password VALUE] [--random-pg-password] [--edge-env-file PATH] [--force]
+Usage: provision_lane_env.sh <lane> [--interactive] [--pg-password VALUE] [--random-pg-password]\
+  [--pg-super-role VALUE] [--pg-super-password VALUE] [--edge-env-file PATH] [--force]
 
 Provision a Supabase lane environment file with random secrets.
 
@@ -11,6 +12,9 @@ Options:
   --interactive           Securely prompt for the Postgres password (ignored if --pg-password is provided)
   --pg-password VALUE     Provide the Postgres password non-interactively
   --random-pg-password    Generate a strong Postgres password automatically (default when no password provided)
+  --pg-super-role VALUE   Override the fallback superuser role used for maintenance (default: supabase_admin)
+  --pg-super-password VALUE
+                          Provide the fallback superuser password non-interactively
   --edge-env-file PATH    Override the default edge runtime env file path
   --force                 Overwrite the existing env file without prompting
   -h, --help              Show this help message
@@ -116,6 +120,8 @@ auto_password=false
 pg_password=""
 edge_env_file=""
 force=false
+pg_super_role=""
+pg_super_password=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -139,6 +145,14 @@ while [[ $# -gt 0 ]]; do
       auto_password=true
       shift
       ;;
+    --pg-super-role)
+      pg_super_role="${2:?missing superuser role value}"
+      shift 2
+      ;;
+    --pg-super-password)
+      pg_super_password="${2:?missing superuser password value}"
+      shift 2
+      ;;
     *)
       echo "unknown option '$1'" >&2
       usage
@@ -160,6 +174,8 @@ existing_edge_env_file=""
 existing_jwt_secret=""
 existing_anon_key=""
 existing_service_key=""
+existing_super_role=""
+existing_super_password=""
 if [[ -f "$env_file" ]]; then
   # shellcheck disable=SC1090
   set -a; source "$env_file"; set +a
@@ -168,6 +184,8 @@ if [[ -f "$env_file" ]]; then
   existing_jwt_secret="${JWT_SECRET:-}"
   existing_anon_key="${ANON_KEY:-}"
   existing_service_key="${SERVICE_ROLE_KEY:-}"
+  existing_super_role="${SUPABASE_SUPER_ROLE:-}"
+  existing_super_password="${SUPABASE_SUPER_PASSWORD:-}"
 fi
 
 case "$lane" in
@@ -206,6 +224,22 @@ if [[ -z "$edge_env_file" ]]; then
   fi
 fi
 
+if [[ -z "$pg_super_role" ]]; then
+  if [[ -n "$existing_super_role" ]]; then
+    pg_super_role="$existing_super_role"
+  else
+    pg_super_role="supabase_admin"
+  fi
+fi
+
+if [[ -z "$pg_super_password" ]]; then
+  if [[ -n "$existing_super_password" ]]; then
+    pg_super_password="$existing_super_password"
+  elif [[ -n "$pg_password" ]]; then
+    pg_super_password="$pg_password"
+  fi
+fi
+
 if [[ -z "$pg_password" ]]; then
   if [[ -n "$existing_pg_password" ]]; then
     pg_password="$existing_pg_password"
@@ -224,6 +258,20 @@ fi
 if [[ "$auto_password" == true && -z "$pg_password" ]]; then
   pg_password="$(openssl rand -hex 32)"
   generated_password=true
+fi
+
+if [[ -z "$pg_super_password" && -n "$pg_password" ]]; then
+  pg_super_password="$pg_password"
+fi
+
+if [[ -z "$pg_super_role" ]]; then
+  echo "superuser role must not be empty" >&2
+  exit 2
+fi
+
+if [[ -z "$pg_super_password" ]]; then
+  echo "superuser password must not be empty; supply --pg-super-password or rerun with existing lane file" >&2
+  exit 2
 fi
 
 images_lock="$root/ops/supabase/images.lock.json"
@@ -296,6 +344,7 @@ fi
 required_vars=(
   COMPOSE_PROJECT_NAME LANE VOL_NS
   PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD
+  SUPABASE_SUPER_ROLE SUPABASE_SUPER_PASSWORD
   KONG_HTTP_PORT EDGE_PORT EDGE_ENV_FILE
   JWT_SECRET ANON_KEY SERVICE_ROLE_KEY
 )
@@ -358,6 +407,8 @@ PGPORT=${pg_port}
 PGDATABASE=${pg_db}
 PGUSER=postgres
 PGPASSWORD=${pg_password}
+SUPABASE_SUPER_ROLE=${pg_super_role}
+SUPABASE_SUPER_PASSWORD=${pg_super_password}
 
 KONG_HTTP_PORT=${kong_port}
 EDGE_PORT=${edge_port}

@@ -50,6 +50,8 @@ required_vars=(
   PGDATABASE
   PGUSER
   PGPASSWORD
+  SUPABASE_SUPER_ROLE
+  SUPABASE_SUPER_PASSWORD
   KONG_HTTP_PORT
   EDGE_PORT
   EDGE_ENV_FILE
@@ -80,6 +82,10 @@ fi
 weak_regex='(changeme|password|test|example|temp|secret)'
 if [[ "${PGPASSWORD,,}" =~ $weak_regex ]]; then
   echo "⚠️  PGPASSWORD appears weak (${PGPASSWORD}). Replace it with a strong unique password." >&2
+fi
+
+if [[ "${SUPABASE_SUPER_PASSWORD,,}" =~ $weak_regex ]]; then
+  echo "⚠️  SUPABASE_SUPER_PASSWORD appears weak (${SUPABASE_SUPER_PASSWORD}). Replace it with a strong unique password." >&2
 fi
 
 images_lock="$root/ops/supabase/images.lock.json"

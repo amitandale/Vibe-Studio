@@ -60,6 +60,13 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-password "<strong-password>"
      ```
+   - Restored clusters that keep a legacy superuser (for example, `supabase_admin`) should also provide fallback credentials so
+     the deploy workflow can recreate the primary `PGUSER` when it is missing:
+     ```bash
+     ./scripts/supabase/provision_lane_env.sh codex \
+       --pg-super-role supabase_admin \
+       --pg-super-password "<supabase-admin-password>"
+     ```
 4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
    - Or use the Supabase dashboard tools to mint signed keys.
@@ -95,6 +102,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
 - **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env. The script will attempt to select the latest compatible Docker Hub tag when the exact version is unavailable.
+- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` and rerun the provisioning script so the workflow can recreate the missing role automatically.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

@@ -27,6 +27,7 @@ scripts/supabase/provision_lane_env.sh codex --pg-password '<postgres-password>'
 - Pass the Postgres password that should be used for the `postgres` role inside the lane.
 - The script generates fresh `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` values using Python's `secrets` module.
 - Override the edge runtime environment file path with `--edge-env-file` if your runner uses a different location.
+- Supply `--pg-super-role` / `--pg-super-password` when the fallback maintenance account differs from the default `supabase_admin` so automation can recreate the primary role if it goes missing.
 - Use `--force` to replace an existing file (for example, when rotating credentials).
 
 The script marks each generated file with `chmod 600` to keep secrets protected on disk.

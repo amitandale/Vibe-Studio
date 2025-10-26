@@ -25,19 +25,78 @@ local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
   local_pg_host="$PGHOST"
 fi
-pg_isready_args=(-h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$PGUSER")
+
+super_role="${SUPABASE_SUPER_ROLE:-${PGUSER:-}}"
+super_password="${SUPABASE_SUPER_PASSWORD:-${PGPASSWORD:-}}"
+
+run_pg_isready() {
+  local user="$1"
+  local password="$2"
+  if [[ -z "$user" ]]; then
+    return 1
+  fi
+  if [[ -n "$password" ]]; then
+    PGPASSWORD="$password" pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+  else
+    pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+  fi
+}
+
+ensure_pg_role() {
+  local target_role="$PGUSER"
+  if [[ -z "$target_role" ]]; then
+    return 0
+  fi
+  if [[ "$super_role" == "$target_role" ]]; then
+    return 0
+  fi
+  if [[ -z "$super_role" || -z "$super_password" ]]; then
+    echo "⚠️  Cannot verify role '$target_role' because SUPABASE_SUPER_ROLE or SUPABASE_SUPER_PASSWORD is unset." >&2
+    return 1
+  fi
+  local result
+  result=$("${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
+    psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${target_role}'" 2>/dev/null || true)
+  if [[ "$result" == "1" ]]; then
+    return 0
+  fi
+  "${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
+    psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres \
+    -v target_role="$target_role" -v target_password="$PGPASSWORD" <<'SQL'
+DO $$
+DECLARE
+  role_name text := :'target_role';
+  role_password text := :'target_password';
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L SUPERUSER', role_name, role_password);
+  END IF;
+END
+$$;
+SQL
+  echo "ℹ️  Ensured Postgres role '$target_role' exists using superuser '$super_role'." >&2
+}
 
 wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if pg_isready "${pg_isready_args[@]}" >/dev/null 2>&1; then
+    if run_pg_isready "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1; then
       return 0
+    fi
+    if [[ -n "$super_role" && "$super_role" != "$PGUSER" && -n "$super_password" ]]; then
+      if run_pg_isready "$super_role" "$super_password" >/dev/null 2>&1; then
+        if ensure_pg_role; then
+          if run_pg_isready "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1; then
+            return 0
+          fi
+        fi
+      fi
     fi
     sleep "$delay"
   done
-  pg_isready "${pg_isready_args[@]}"
+  run_pg_isready "$PGUSER" "$PGPASSWORD"
 }
 case "$cmd" in
   start)
@@ -51,7 +110,8 @@ case "$cmd" in
     ;;
   db-health)
     wait_for_pg
-    pg_isready "${pg_isready_args[@]}"
+    ensure_pg_role
+    run_pg_isready "$PGUSER" "$PGPASSWORD"
     ;;
   restart)
     "${compose_cmd[@]}" down
@@ -59,7 +119,8 @@ case "$cmd" in
     ;;
   health)
     wait_for_pg
-    pg_isready "${pg_isready_args[@]}"
+    ensure_pg_role
+    run_pg_isready "$PGUSER" "$PGPASSWORD"
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)

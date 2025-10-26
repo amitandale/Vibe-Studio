@@ -32,6 +32,7 @@ openssl version
 - [ ] Image digests (`DB_IMAGE` … `KONG_IMAGE`) synced via `./scripts/supabase/refresh_image_pins.sh`
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
+- [ ] Legacy clusters provide `SUPABASE_SUPER_ROLE`/`SUPABASE_SUPER_PASSWORD` in each lane env
 
 ## 🔍 Verification Commands
 
@@ -40,6 +41,7 @@ openssl version
 ./scripts/supabase/lane.sh main health
 ops/bin/healthwait.sh http://127.0.0.1:8101 60
 pg_isready -h 127.0.0.1 -p 5433 -d vibe_main -U postgres
+./scripts/supabase/lane.sh main db-health
 curl -fsS http://127.0.0.1:9901/
 ```
 
