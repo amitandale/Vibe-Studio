@@ -82,13 +82,13 @@ ensure_pg_role() {
   fi
   if [[ -z "$super_role" || -z "$super_password" ]]; then
     echo "⚠️  Cannot verify role '$target_role' because SUPABASE_SUPER_ROLE or SUPABASE_SUPER_PASSWORD is unset." >&2
-    return 1
+    return 2
   fi
   local result=""
   if ! result=$("${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
       psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${target_role}'" 2>/dev/null); then
     warn_superuser_config
-    return 1
+    return 2
   fi
   result="$(tr -d '[:space:]' <<<"$result")"
   if [[ "$result" == "1" ]]; then
@@ -109,7 +109,7 @@ END
 $$;
 SQL
     warn_superuser_config
-    return 1
+    return 2
   fi
   echo "ℹ️  Ensured Postgres role '$target_role' exists using superuser '$super_role'." >&2
 }
@@ -121,8 +121,10 @@ wait_for_pg() {
   if [[ -n "$super_role" && -n "$super_password" && "$super_role" != "$PGUSER" ]]; then
     if ! wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
       warn_superuser_config
-    else
-      ensure_pg_role || true
+      return 2
+    fi
+    if ! ensure_pg_role; then
+      return 2
     fi
   fi
 
@@ -139,8 +141,12 @@ case "$cmd" in
     "${compose_cmd[@]}" up -d db
     ;;
   db-health)
-    wait_for_pg
-    ensure_pg_role
+    if ! wait_for_pg; then
+      exit 2
+    fi
+    if ! ensure_pg_role; then
+      exit 2
+    fi
     run_pg_isready "$PGUSER" "$PGPASSWORD"
     ;;
   restart)
@@ -148,8 +154,12 @@ case "$cmd" in
     "${compose_cmd[@]}" up -d
     ;;
   health)
-    wait_for_pg
-    ensure_pg_role
+    if ! wait_for_pg; then
+      exit 2
+    fi
+    if ! ensure_pg_role; then
+      exit 2
+    fi
     run_pg_isready "$PGUSER" "$PGPASSWORD"
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
