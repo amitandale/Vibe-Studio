@@ -35,6 +35,7 @@ warn_superuser_config() {
    Provide the correct values with:
      scripts/supabase/provision_lane_env.sh $lane \\
        --pg-super-role <role> --pg-super-password <password>
+   See docs/SUPABASE_SETUP.md#restore-existing-superusers for recovery steps on reused volumes.
 MSG
 }
 

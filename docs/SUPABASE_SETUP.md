@@ -67,6 +67,21 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
        --pg-super-role supabase_admin \
        --pg-super-password "<supabase-admin-password>"
      ```
+
+### Restore existing superusers
+
+When you reuse a Supabase volume that was initialized elsewhere, populate the fallback credentials with the existing
+superuser so the deploy workflow can recreate the lane-specific role (usually `postgres`) and reset its password automatically:
+
+```bash
+./scripts/supabase/provision_lane_env.sh <lane> \
+  --pg-super-role <existing_superuser> \
+  --pg-super-password '<existing_superuser_password>'
+```
+
+If you do not know the values, connect directly on the host and inspect available roles (for example, with
+`docker exec -it supa-<lane>-db-1 psql -U <known_superuser> -d postgres -c "\\du"`). Once the env file contains valid
+credentials, rerun the deploy workflow and it will reconcile the lane role automatically.
 4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
    - Or use the Supabase dashboard tools to mint signed keys.
