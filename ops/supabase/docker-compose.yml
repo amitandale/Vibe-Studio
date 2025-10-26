@@ -40,12 +40,6 @@ services:
     image: ${IMGPROXY_IMAGE:?}
     env_file: ${ENV_FILE}
 
-  vector:
-    image: ${VECTOR_IMAGE:?}
-    env_file: ${ENV_FILE}
-    depends_on:
-      - db
-
   edge-runtime:
     image: ${EDGE_IMAGE:?}
     env_file: ${ENV_FILE}

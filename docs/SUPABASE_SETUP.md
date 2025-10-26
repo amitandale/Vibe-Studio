@@ -22,7 +22,7 @@ which docker docker compose psql jq python3 curl openssl
 
 ## 🏗️ Architecture Overview
 
-Each Git branch class maps to its own long-lived Supabase lane. Every lane runs its own Compose project containing PostgreSQL, GoTrue auth, PostgREST, Realtime, Storage API, Imgproxy, optional Vector, Edge runtime, and Kong. Volumes, ports, and API keys are isolated so deployments do not interfere with each other.
+Each Git branch class maps to its own long-lived Supabase lane. Every lane runs its own Compose project containing PostgreSQL, GoTrue auth, PostgREST, Realtime, Storage API, Imgproxy, Edge runtime, and Kong. Volumes, ports, and API keys are isolated so deployments do not interfere with each other.
 
 ## 🔢 Port Allocation
 
@@ -49,8 +49,8 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ./scripts/supabase/provision_lane_env.sh work
      ./scripts/supabase/provision_lane_env.sh codex
      ```
-     The script keeps digest-pinned image references (e.g. `VECTOR_IMAGE`) in sync with `ops/supabase/images.lock.json` so new
-     containers launch with the expected versions.
+    The script keeps digest-pinned image references in sync with `ops/supabase/images.lock.json` so new containers launch with
+    the expected versions.
    - Add `--random-pg-password` to request random password generation explicitly (the deploy workflow does this automatically).
    - Interactive password entry:
      ```bash
@@ -95,8 +95,6 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
 - **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env. The script will attempt to select the latest compatible Docker Hub tag when the exact version is unavailable.
-- **Missing image variables (e.g. `VECTOR_IMAGE`)**: Re-run `./scripts/supabase/provision_lane_env.sh <lane> --random-pg-password`
-  to refresh the lane env file from the lock file.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

@@ -29,7 +29,7 @@ openssl version
 - [ ] Repository checked out to deployment directory
 - [ ] `ops/supabase/lanes/*.env` created (see `scripts/supabase/provision_lane_env.sh`)
 - [ ] Unique JWT/anon/service keys generated for each lane
-- [ ] Image digests (`DB_IMAGE` … `VECTOR_IMAGE`) synced via `./scripts/supabase/refresh_image_pins.sh`
+- [ ] Image digests (`DB_IMAGE` … `KONG_IMAGE`) synced via `./scripts/supabase/refresh_image_pins.sh`
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
 
