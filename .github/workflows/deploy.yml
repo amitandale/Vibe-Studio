@@ -96,6 +96,34 @@ jobs:
             exit 1
           fi
 
+      - name: Capture Supabase lane state
+        id: supabase_state
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          envfile="ops/supabase/lanes/${LANE}.env"
+          if [[ ! -f "$envfile" ]]; then
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set -a
+          # shellcheck disable=SC1090
+          source "$envfile"
+          set +a
+          volume_name="supa-${VOL_NS}-db"
+          if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+            echo "volume_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+          fi
+          if scripts/supabase/lane.sh "$LANE" status; then
+            echo "running=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "running=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Validate Supabase image lock
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: ops/bin/validate-lock.sh ops/supabase/images.lock.json
@@ -105,9 +133,13 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
-          scripts/supabase/lane.sh "$LANE" stop || true
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" ]]; then
+            scripts/supabase/lane.sh "$LANE" stop
+          else
+            echo "Supabase lane $LANE was not running prior to deploy; skip stop."
+          fi
           scripts/supabase/lane.sh "$LANE" db-only
-          scripts/supabase/lane.sh "$LANE" health
+          scripts/supabase/lane.sh "$LANE" db-health
 
       - name: Apply DB migrations (transactional + advisory lock)
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
@@ -119,9 +151,16 @@ jobs:
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         env:
           LANE: ${{ steps.lane.outputs.lane }}
-        run: scripts/supabase/lane.sh "$LANE" start
+        run: |
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" || "${{ steps.supabase_state.outputs.volume_present }}" != "true" ]]; then
+            scripts/supabase/lane.sh "$LANE" start
+          else
+            echo "Supabase lane $LANE was previously stopped; removing transient db-only container."
+            scripts/supabase/lane.sh "$LANE" stop
+          fi
 
       - name: Wait for Kong health
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         env:
@@ -131,6 +170,7 @@ jobs:
           ops/bin/healthwait.sh "http://127.0.0.1:${KONG_PORT}" 120
 
       - name: Reload Edge runtime
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         env:
           LANE: ${{ steps.lane.outputs.lane }}
