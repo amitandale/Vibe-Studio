@@ -102,7 +102,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 - **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
 - **Compose failures**: Ensure Docker can pull the digest-pinned images listed in `ops/supabase/images.lock.json`.
 - **Missing or stale image pins**: Run `./scripts/supabase/refresh_image_pins.sh` to sync the lock file, then reprovision the lane env. The script will attempt to select the latest compatible Docker Hub tag when the exact version is unavailable.
-- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` and rerun the provisioning script so the workflow can recreate the missing role automatically.
+- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` and rerun the provisioning script so the workflow can recreate the missing role automatically and reset its password.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

@@ -104,6 +104,8 @@ DECLARE
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
     EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L SUPERUSER', role_name, role_password);
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', role_name, role_password);
   END IF;
 END
 $$;
@@ -111,7 +113,7 @@ SQL
     warn_superuser_config
     return 2
   fi
-  echo "ℹ️  Ensured Postgres role '$target_role' exists using superuser '$super_role'." >&2
+  echo "ℹ️  Ensured Postgres role '$target_role' exists and password updated using superuser '$super_role'." >&2
 }
 
 wait_for_pg() {
