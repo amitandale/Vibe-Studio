@@ -25,6 +25,20 @@ local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
   local_pg_host="$PGHOST"
 fi
+pg_isready_args=(-h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$PGUSER")
+
+wait_for_pg() {
+  local attempts="${1:-30}"
+  local delay="${2:-2}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if pg_isready "${pg_isready_args[@]}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+  pg_isready "${pg_isready_args[@]}"
+}
 case "$cmd" in
   start)
     "${compose_cmd[@]}" up -d --remove-orphans
@@ -36,14 +50,16 @@ case "$cmd" in
     "${compose_cmd[@]}" up -d db
     ;;
   db-health)
-    pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$PGUSER"
+    wait_for_pg
+    pg_isready "${pg_isready_args[@]}"
     ;;
   restart)
     "${compose_cmd[@]}" down
     "${compose_cmd[@]}" up -d
     ;;
   health)
-    pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$PGUSER"
+    wait_for_pg
+    pg_isready "${pg_isready_args[@]}"
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)
