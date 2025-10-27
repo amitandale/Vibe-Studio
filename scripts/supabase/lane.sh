@@ -19,14 +19,6 @@ fi
 export ENV_FILE="$envfile"
 # shellcheck disable=SC1090
 set -a; source "$envfile"; set +a
-if [[ -n "${SUPABASE_SUPER_ROLE_OVERRIDE:-}" ]]; then
-  SUPABASE_SUPER_ROLE="$SUPABASE_SUPER_ROLE_OVERRIDE"
-fi
-
-if [[ -n "${SUPABASE_SUPER_PASSWORD_OVERRIDE:-}" ]]; then
-  SUPABASE_SUPER_PASSWORD="$SUPABASE_SUPER_PASSWORD_OVERRIDE"
-fi
-
 compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
 
 local_pg_host="127.0.0.1"

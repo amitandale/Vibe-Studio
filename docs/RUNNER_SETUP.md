@@ -28,12 +28,11 @@ openssl version
 
 - [ ] Repository checked out to deployment directory
 - [ ] `ops/supabase/lanes/*.env` created (see `scripts/supabase/provision_lane_env.sh`)
+- [ ] `ops/supabase/lanes/superusers.env` present with fallback superuser role/password for each lane
 - [ ] Unique JWT/anon/service keys generated for each lane
 - [ ] Image digests (`DB_IMAGE` … `KONG_IMAGE`) synced via `./scripts/supabase/refresh_image_pins.sh`
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
-- [ ] Legacy clusters provide `SUPABASE_SUPER_ROLE`/`SUPABASE_SUPER_PASSWORD` in each lane env
-- [ ] (Optional) Matching GitHub secrets `SUPABASE_<LANE>_SUPER_ROLE` and `SUPABASE_<LANE>_SUPER_PASSWORD` populated for CI overrides
 
 ## 🔍 Verification Commands
 
@@ -54,5 +53,6 @@ Repeat for `work` and `codex` lanes adjusting ports as needed.
 - **Permission denied on env file** → Ensure files are owned by the runner user and have mode `600`.
 - **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free, run `./scripts/supabase/refresh_image_pins.sh`, then rerun the provisioning script to refresh image variables. The refresh helper will advance pins to the newest published tag when the requested version is unavailable.
 - **Edge runtime cannot read env** → Verify `EDGE_ENV_FILE` points to a readable file mounted on the host.
+- **Superuser override missing** → Check `ops/supabase/lanes/superusers.env` for each lane and regenerate with `./scripts/supabase/provision_lane_env.sh <lane> --force` if values are blank.
 
 See also: [Supabase Lane Setup Guide](./SUPABASE_SETUP.md).

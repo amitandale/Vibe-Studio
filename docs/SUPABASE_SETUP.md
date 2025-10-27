@@ -50,7 +50,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ./scripts/supabase/provision_lane_env.sh codex
      ```
     The script keeps digest-pinned image references in sync with `ops/supabase/images.lock.json` so new containers launch with
-    the expected versions.
+    the expected versions. It also maintains `ops/supabase/lanes/superusers.env`, a runner-local credentials file that stores each lane's fallback superuser role and password with `600` permissions for reuse.
    - Add `--random-pg-password` to request random password generation explicitly (the deploy workflow does this automatically).
    - Interactive password entry:
      ```bash
@@ -61,7 +61,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
      ./scripts/supabase/provision_lane_env.sh main --pg-password "<strong-password>"
      ```
    - Restored clusters that keep a legacy superuser (for example, `supabase_admin`) should also provide fallback credentials so
-     the deploy workflow can recreate the primary `PGUSER` when it is missing:
+     the deploy workflow can recreate the primary `PGUSER` when it is missing. You can supply them directly or edit `ops/supabase/lanes/superusers.env` before rerunning the helper:
      ```bash
      ./scripts/supabase/provision_lane_env.sh codex \
        --pg-super-role supabase_admin \
@@ -83,9 +83,6 @@ If you do not know the values, connect directly on the host and inspect availabl
 `docker exec -it supa-<lane>-db-1 psql -U <known_superuser> -d postgres -c "\\du"`). Once the env file contains valid
 credentials, rerun the deploy workflow and it will reconcile the lane role automatically.
 
-> 💡 **CI tip:** Populate matching GitHub secrets named `SUPABASE_<LANE>_SUPER_ROLE` and `SUPABASE_<LANE>_SUPER_PASSWORD`. The
-> deploy workflow reads those values and overrides the lane `.env` before provisioning so automation always has the correct
-> superuser credentials without exposing them in git.
 4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
    - Or use the Supabase dashboard tools to mint signed keys.
@@ -113,7 +110,7 @@ credentials, rerun the deploy workflow and it will reconcile the lane role autom
 - Generated secrets are placeholders—replace them with signed keys managed by your secret rotation tooling.
 - Keep file permissions strict (`600`) and restrict runner access.
 - Rotate `PGPASSWORD`, `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` regularly.
-- Store canonical secrets in your runner’s secret store (e.g., Ansible vault, 1Password CLI) and re-run the provisioning script with `--pg-password` when rotating.
+- Store canonical secrets in your runner’s secret store (e.g., Ansible vault, 1Password CLI) and re-run the provisioning script with `--pg-password` when rotating. Back up `ops/supabase/lanes/superusers.env` securely; it is the source of truth for the fallback superuser credentials used to repair recycled volumes.
 
 ## 🛠️ Troubleshooting
 
