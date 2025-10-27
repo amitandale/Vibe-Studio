@@ -19,7 +19,7 @@ if [[ -f "$state_envfile" ]]; then
 elif [[ -f "$repo_envfile" ]]; then
   envfile="$repo_envfile"
 else
-  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --random-pg-password" >&2
+  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --interactive --pg-super-role supabase_admin" >&2
   exit 1
 fi
 export ENV_FILE="$envfile"
@@ -36,9 +36,7 @@ super_role="${SUPABASE_SUPER_ROLE:-${PGUSER:-}}"
 if [[ "$super_role" == supabase_admin_${lane} ]]; then
   super_role="supabase_admin"
 fi
-super_password="${SUPABASE_SUPER_PASSWORD:-${PGPASSWORD:-}}"
-active_super_role=""
-active_super_password=""
+super_password="${SUPABASE_SUPER_PASSWORD:-}"
 
 warn_superuser_config() {
   cat >&2 <<MSG
@@ -49,50 +47,6 @@ warn_superuser_config() {
    See docs/SUPABASE_SETUP.md#restore-existing-superusers for recovery steps on reused volumes.
 MSG
 }
-repair_superuser() {
-  local exec_env=("${compose_cmd[@]}" exec -T db)
-  local repair_role="$super_role"
-  local repair_password="$super_password"
-
-  if [[ -z "$repair_role" ]]; then
-    repair_role="$PGUSER"
-    repair_password="$PGPASSWORD"
-  fi
-
-  if [[ -z "$repair_role" ]]; then
-    return 1
-  fi
-
-  local env_args=()
-  if [[ -n "$repair_password" ]]; then
-    env_args=(env PGPASSWORD="$repair_password")
-  fi
-
-  if ! "${exec_env[@]}" "${env_args[@]}" psql -v ON_ERROR_STOP=1 -U "$repair_role" -d postgres \
-    -v target_role="$PGUSER" \
-    -v target_password="$PGPASSWORD" \
-    -v desired_super_role="$super_role" \
-    -v desired_super_password="$super_password" <<'SQL'
-SELECT CASE
-         WHEN :'target_role' = '' THEN NULL
-         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
-           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-       END;
-\gexec
-SELECT CASE
-         WHEN :'desired_super_role' = '' OR :'desired_super_role' = :'target_role' THEN NULL
-         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
-           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-       END;
-\gexec
-SQL
-  then
-    return 1
-  fi
-}
-
 
 run_pg_isready() {
   local user="$1"
@@ -128,24 +82,56 @@ wait_for_user() {
   run_pg_isready "$user" "$password"
 }
 
-connect_with_superuser() {
+ensure_lane_role() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
 
-  active_super_role=""
-  active_super_password=""
+  if wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay" >/dev/null 2>&1; then
+    return 0
+  fi
 
-  if [[ -n "$super_role" && -n "$super_password" ]]; then
-    if wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
-      active_super_role="$super_role"
-      active_super_password="$super_password"
-      return 0
-    fi
+  if [[ -z "$super_role" || -z "$super_password" ]]; then
+    warn_superuser_config
+    return 2
+  fi
+
+  if ! wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
+    warn_superuser_config
+    return 2
+  fi
+
+  local exec_env=("${compose_cmd[@]}" exec -T db)
+  local env_args=()
+  if [[ -n "$super_password" ]]; then
+    env_args=(env PGPASSWORD="$super_password")
+  fi
+
+  if ! "${exec_env[@]}" "${env_args[@]}" psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres \
+      -v target_role="$PGUSER" \
+      -v target_password="$PGPASSWORD" <<'SQL'
+DO $$
+DECLARE
+  target_role name := :'target_role';
+  target_password text := :'target_password';
+BEGIN
+  IF target_role IS NULL OR target_role = '' THEN
+    RETURN;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
+    EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+  END IF;
+END;
+$$;
+SQL
+  then
+    warn_superuser_config
+    return 2
   fi
 
   if wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay" >/dev/null 2>&1; then
-    active_super_role="$PGUSER"
-    active_super_password="$PGPASSWORD"
     return 0
   fi
 
@@ -153,67 +139,11 @@ connect_with_superuser() {
   return 2
 }
 
-sync_roles() {
-  if ! connect_with_superuser; then
-    if ! repair_superuser; then
-      warn_superuser_config
-      return 2
-    fi
-
-    if ! connect_with_superuser; then
-      warn_superuser_config
-      return 2
-    fi
-  fi
-
-  local exec_env=("${compose_cmd[@]}" exec -T db)
-  local psql_env=(psql -v ON_ERROR_STOP=1 -U "$active_super_role" -d postgres)
-  local env_args=()
-  if [[ -n "$active_super_password" ]]; then
-    env_args=(env PGPASSWORD="$active_super_password")
-  fi
-
-  if ! "${exec_env[@]}" "${env_args[@]}" "${psql_env[@]}" \
-      -v target_role="$PGUSER" \
-      -v target_password="$PGPASSWORD" \
-      -v desired_super_role="$super_role" \
-      -v desired_super_password="$super_password" <<'SQL'
-SELECT CASE
-         WHEN :'target_role' = '' THEN NULL
-         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
-           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-       END;
-\gexec
-SELECT CASE
-         WHEN :'desired_super_role' = '' OR :'desired_super_role' = :'target_role' THEN NULL
-         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
-           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-       END;
-\gexec
-SQL
-  then
-    warn_superuser_config
-    return 2
-  fi
-
-  if [[ "$active_super_role" != "$PGUSER" ]]; then
-    wait_for_user "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1 || true
-  fi
-
-  if [[ -n "$super_role" && "$super_role" != "$PGUSER" ]]; then
-    wait_for_user "$super_role" "$super_password" >/dev/null 2>&1 || true
-  fi
-
-  return 0
-}
-
 wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
 
-  if ! sync_roles; then
+  if ! ensure_lane_role "$attempts" "$delay"; then
     return 2
   fi
 

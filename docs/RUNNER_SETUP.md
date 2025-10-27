@@ -29,6 +29,7 @@ openssl version
 - [ ] Repository checked out to deployment directory
 - [ ] Supabase state directory prepared (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`)
 - [ ] Lane env files and `superusers.env` generated in the state directory via `scripts/supabase/provision_lane_env.sh`
+- [ ] Supabase admin password recorded separately from lane `PGPASSWORD`
 - [ ] Unique JWT/anon/service keys generated for each lane
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
@@ -52,6 +53,6 @@ Repeat for `work` and `codex` lanes adjusting ports as needed.
 - **Permission denied on env file** → Ensure files are owned by the runner user and have mode `600`.
 - **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free, then verify the tags in `ops/supabase/docker-compose.yml` exist in Docker Hub. Update the compose file when Supabase ships a new release and rerun the provisioning script so credentials stay in sync.
 - **Edge runtime cannot read env** → Verify `EDGE_ENV_FILE` points to a readable file mounted on the host.
-- **Superuser override missing** → Check `$SUPABASE_STATE_DIR/superusers.env` for each lane and regenerate with `./scripts/supabase/provision_lane_env.sh <lane> --force` if values are blank.
+- **Superuser override missing** → Check `$SUPABASE_STATE_DIR/superusers.env` for each lane and regenerate with `./scripts/supabase/provision_lane_env.sh <lane> --force --pg-super-role supabase_admin` once you know the admin password.
 
 See also: [Supabase Lane Setup Guide](./SUPABASE_SETUP.md).

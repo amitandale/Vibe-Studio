@@ -21,14 +21,14 @@ runs.
 3. Generate the lane env files with strong secrets (auto password generation by default):
 
 ```bash
-./scripts/supabase/provision_lane_env.sh main
-./scripts/supabase/provision_lane_env.sh work
-./scripts/supabase/provision_lane_env.sh codex
+./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
+./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
+./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ```
 
 The script stores canonical credentials inside the Supabase state directory (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`) and writes a working copy to `ops/supabase/lanes/<lane>.env` with mode `600`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. The workflow always reads from the state directory first, so once a lane is provisioned the stored passwords remain authoritative across deploys.
 
-If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `$SUPABASE_STATE_DIR/superusers.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role automatically when it goes missing.
+If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `$SUPABASE_STATE_DIR/superusers.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 
 ## 📘 Read Next
 

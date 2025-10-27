@@ -94,7 +94,7 @@ jobs:
             echo ""
             echo "To fix this, SSH to the runner and run:"
             echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
-            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --random-pg-password"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --interactive --pg-super-role supabase_admin"
             echo ""
             echo "See docs/SUPABASE_SETUP.md for complete instructions."
             exit 1

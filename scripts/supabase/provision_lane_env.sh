@@ -12,7 +12,7 @@ Options:
   --pg-password VALUE        Provide the Postgres password non-interactively.
   --random-pg-password       Generate a strong Postgres password automatically.
   --pg-super-role VALUE      Override the fallback superuser role (default: supabase_admin).
-  --pg-super-password VALUE  Provide the fallback superuser password.
+  --pg-super-password VALUE  Provide the fallback superuser password (required on first run, kept separate from the lane password).
   --edge-env-file PATH       Override the edge runtime env file path.
   --force                    Overwrite the existing file without confirmation.
   -h, --help                 Show this help message.
@@ -203,8 +203,16 @@ if [[ -z "$pg_super_password" ]]; then
     pg_super_password="$config_super_password"
   elif [[ -n "$existing_super_password" ]]; then
     pg_super_password="$existing_super_password"
+  elif [[ "$interactive" == true ]]; then
+    read -rsp "Enter Supabase superuser password for lane '$lane' (role ${pg_super_role:-supabase_admin}): " pg_super_password
+    echo
+    if [[ -z "$pg_super_password" ]]; then
+      echo "Supabase superuser password cannot be empty." >&2
+      exit 1
+    fi
   else
-    pg_super_password="$pg_password"
+    echo "Supabase superuser password required. Provide --pg-super-password or run with --interactive." >&2
+    exit 1
   fi
 fi
 
