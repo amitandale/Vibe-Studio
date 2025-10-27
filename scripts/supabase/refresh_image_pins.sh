@@ -127,7 +127,7 @@ declare -A default_tags=(
   [REST_IMAGE]="postgrest/postgrest:v13.0.7",
   [REALTIME_IMAGE]="supabase/realtime:v2.56.0",
   [STORAGE_IMAGE]="supabase/storage-api:v1.28.1",
-  [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.15.1",
+  [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.15.0",
   [EDGE_IMAGE]="supabase/edge-runtime:v1.49.3",
   [KONG_IMAGE]="kong:3.4.3"
 )
