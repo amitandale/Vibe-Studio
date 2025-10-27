@@ -37,6 +37,136 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set lane from branch
+        id: lane
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          lane=""
+          case "${GITHUB_REF_NAME}" in
+            main)
+              lane="main"
+              ;;
+            work)
+              lane="work"
+              ;;
+            codex/*)
+              lane="codex"
+              ;;
+            *)
+              echo "LANE=unknown" >> "$GITHUB_ENV"
+              exit 1
+              ;;
+          esac
+          echo "LANE=${lane}" >> "$GITHUB_ENV"
+          echo "lane=${lane}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure lane environment is provisioned
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
+
+      - name: Validate lane environment exists
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
+            echo ""
+            echo "🚨 Lane environment not configured!"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --random-pg-password"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
+      - name: Capture Supabase lane state
+        id: supabase_state
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          envfile="ops/supabase/lanes/${LANE}.env"
+          if [[ ! -f "$envfile" ]]; then
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set -a
+          # shellcheck disable=SC1090
+          source "$envfile"
+          set +a
+          volume_name="supa-${VOL_NS}-db"
+          if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+            echo "volume_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+          fi
+          if scripts/supabase/lane.sh "$LANE" status; then
+            echo "running=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "running=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop lane services and bring DB up
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" ]]; then
+            scripts/supabase/lane.sh "$LANE" stop
+          else
+            echo "Supabase lane $LANE was not running prior to deploy; skip stop."
+          fi
+          scripts/supabase/lane.sh "$LANE" db-only
+          scripts/supabase/lane.sh "$LANE" db-health
+
+      - name: Apply DB migrations (transactional + advisory lock)
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/migrate.sh "$LANE"
+
+      - name: Start lane services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" || "${{ steps.supabase_state.outputs.volume_present }}" != "true" ]]; then
+            scripts/supabase/lane.sh "$LANE" start
+          else
+            echo "Supabase lane $LANE was previously stopped; removing transient db-only container."
+            scripts/supabase/lane.sh "$LANE" stop
+          fi
+
+      - name: Wait for Kong health
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          KONG_PORT=$(grep -E '^KONG_HTTP_PORT=' "ops/supabase/lanes/${LANE}.env" | cut -d= -f2)
+          ops/bin/healthwait.sh "http://127.0.0.1:${KONG_PORT}" 120
+
+      - name: Reload Edge runtime
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/edge_deploy.sh "$LANE"
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
