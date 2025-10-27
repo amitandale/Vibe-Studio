@@ -42,7 +42,32 @@ fi
 os_part="${arch%%/*}"
 arch_part="${arch##*/}"
 
-resolve_digest() {
+verify_digest() {
+  local ref="$1"
+  if [[ "$ref" != *@sha256:* ]]; then
+    return 1
+  fi
+  local digest="${ref##*@}"
+  local name="${ref%%@*}"
+  local repo="$name"
+  if [[ "$name" == *":"* ]]; then
+    local after_slash="${name##*/}"
+    if [[ "$after_slash" == *":"* ]]; then
+      local tag="${after_slash##*:}"
+      repo="${name%:$tag}"
+    fi
+  fi
+  local inspect_ref="${repo}@${digest}"
+  if docker manifest inspect "$inspect_ref" >/dev/null 2>&1; then
+    return 0
+  fi
+  if docker pull "$inspect_ref" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+resolve_digest_for_base() {
   local base_ref="$1"
   local manifest_json=""
   manifest_json=$(docker manifest inspect "$base_ref" 2>/dev/null || true)
@@ -51,17 +76,20 @@ resolve_digest() {
     digest=$(jq -r --arg arch "$arch_part" --arg os "$os_part" '
       [
         (.manifests[]? | select((.platform.architecture // "") == $arch and (.platform.os // "linux") == $os) | .digest),
+        (.manifests[]? | .digest)?,
         .Descriptor.digest?,
         .digest?,
-        (.manifests[]? | .digest)?,
         (.manifests[0].digest?)
       ]
       | map(select(. != null and . != ""))
       | first // empty
     ' <<<"$manifest_json")
     if [[ -n "$digest" ]]; then
-      printf '%s@%s\n' "$base_ref" "$digest"
-      return 0
+      local candidate="${base_ref%@*}@${digest}"
+      if verify_digest "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
     fi
   fi
 
@@ -69,8 +97,25 @@ resolve_digest() {
     local repo_digest
     repo_digest=$(docker image inspect "$base_ref" --format '{{index .RepoDigests 0}}' 2>/dev/null | head -n1 || true)
     if [[ -n "$repo_digest" ]]; then
-      printf '%s\n' "$repo_digest"
-      return 0
+      local repo_only="${repo_digest%%@*}"
+      local digest_only="${repo_digest##*@}"
+      local tagged_repo="$base_ref"
+      if [[ "$tagged_repo" == *@* ]]; then
+        tagged_repo="${tagged_repo%@*}"
+      fi
+      if [[ "$tagged_repo" != *":"* ]]; then
+        tagged_repo="$repo_only"
+      fi
+      local candidate="${tagged_repo%@*}@${digest_only}"
+      if verify_digest "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+      candidate="${repo_only}@${digest_only}"
+      if verify_digest "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
     fi
   fi
   return 1
@@ -148,6 +193,17 @@ discover_fallback_tag() {
   return 1
 }
 
+declare -A default_tags=(
+  [DB_IMAGE]="supabase/postgres:15.8.1.135",
+  [AUTH_IMAGE]="supabase/gotrue:v2.180.0",
+  [REST_IMAGE]="postgrest/postgrest:v13.0.7",
+  [REALTIME_IMAGE]="supabase/realtime:v2.56.0",
+  [STORAGE_IMAGE]="supabase/storage-api:v1.28.1",
+  [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.15.1",
+  [EDGE_IMAGE]="supabase/edge-runtime:v1.49.3",
+  [KONG_IMAGE]="kong:3.4.3"
+)
+
 mapfile -t entries < <(jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$lock_file")
 
 changed=false
@@ -162,25 +218,59 @@ for entry in "${entries[@]}"; do
     echo "unable to determine base reference for $key" >&2
     exit 1
   fi
-  resolved="$(resolve_digest "$base")" || {
-    repo="${base%%:*}"
+
+  repo="${base%%:*}"
+  tag=""
+  if [[ "$base" == *":"* ]]; then
     tag="${base##*:}"
-    if [[ -z "$repo" || -z "$tag" || "$repo" == "$base" ]]; then
-      echo "failed to resolve digest for $key ($base)" >&2
-      exit 1
-    fi
+  fi
+
+  declare -a attempts=()
+  declare -A attempt_notes=()
+  attempts+=("$base")
+
+  fallback_tag=""
+  fallback_ref=""
+  default_ref=""
+  if [[ -n "$repo" && -n "$tag" ]]; then
     fallback_tag=$(discover_fallback_tag "$repo" "$tag" 2>/dev/null || true)
-    if [[ -z "$fallback_tag" ]]; then
-      echo "failed to resolve digest for $key ($base)" >&2
-      exit 1
+    if [[ -n "$fallback_tag" ]]; then
+      fallback_ref="$repo:$fallback_tag"
+      attempts+=("$fallback_ref")
+      attempt_notes["$fallback_ref"]="⚠️  $key: falling back from $base to $fallback_ref"
     fi
-    fallback_ref="$repo:$fallback_tag"
-    echo "⚠️  $key: falling back from $base to $fallback_ref" >&2
-    resolved="$(resolve_digest "$fallback_ref")" || {
-      echo "failed to resolve digest for $key using fallback $fallback_ref" >&2
-      exit 1
-    }
-  }
+  fi
+
+  if [[ -n "${default_tags[$key]:-}" ]]; then
+    default_ref="${default_tags[$key]}"
+    attempts+=("$default_ref")
+    if [[ "$default_ref" != "$base" ]]; then
+      attempt_notes["$default_ref"]="⚠️  $key: using default pin $default_ref"
+    fi
+  fi
+
+  resolved=""
+  declare -A seen=()
+  for attempt in "${attempts[@]}"; do
+    if [[ -z "$attempt" || -n "${seen[$attempt]:-}" ]]; then
+      continue
+    fi
+    seen[$attempt]=1
+    candidate="$(resolve_digest_for_base "$attempt")" || continue
+    if verify_digest "$candidate"; then
+      resolved="$candidate"
+      if [[ -n "${attempt_notes[$attempt]:-}" ]]; then
+        echo "${attempt_notes[$attempt]}" >&2
+      fi
+      break
+    fi
+  done
+
+  if [[ -z "$resolved" ]]; then
+    echo "failed to resolve digest for $key (attempted ${attempts[*]})" >&2
+    exit 1
+  fi
+
   if [[ "$resolved" != "$current" ]]; then
     changed=true
   fi

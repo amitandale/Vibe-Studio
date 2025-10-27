@@ -42,7 +42,7 @@ jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$file" | while IFS='=' rea
     if ! docker manifest inspect "$inspect_ref" >/dev/null 2>&1; then
       base="${image%@*}"
       if docker manifest inspect "$base" >/dev/null 2>&1; then
-        echo "image $key has an out-of-date digest; refresh with scripts/supabase/provision_lane_env.sh <lane> --random-pg-password --force" >&2
+        echo "image $key has an out-of-date digest; refresh with scripts/supabase/refresh_image_pins.sh" >&2
       else
         echo "unable to resolve docker manifest for $key ($image)" >&2
       fi
