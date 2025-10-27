@@ -28,6 +28,8 @@ fi
 
 super_role="${SUPABASE_SUPER_ROLE:-${PGUSER:-}}"
 super_password="${SUPABASE_SUPER_PASSWORD:-${PGPASSWORD:-}}"
+active_super_role=""
+active_super_password=""
 
 warn_superuser_config() {
   cat >&2 <<MSG
@@ -73,62 +75,94 @@ wait_for_user() {
   run_pg_isready "$user" "$password"
 }
 
-ensure_pg_role() {
-  local target_role="$PGUSER"
-  if [[ -z "$target_role" ]]; then
+connect_with_superuser() {
+  local attempts="${1:-30}"
+  local delay="${2:-2}"
+
+  active_super_role=""
+  active_super_password=""
+
+  if [[ -n "$super_role" && -n "$super_password" ]]; then
+    if wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
+      active_super_role="$super_role"
+      active_super_password="$super_password"
+      return 0
+    fi
+  fi
+
+  if wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay" >/dev/null 2>&1; then
+    active_super_role="$PGUSER"
+    active_super_password="$PGPASSWORD"
     return 0
   fi
-  if [[ "$super_role" == "$target_role" ]]; then
-    return 0
-  fi
-  if [[ -z "$super_role" || -z "$super_password" ]]; then
-    echo "⚠️  Cannot verify role '$target_role' because SUPABASE_SUPER_ROLE or SUPABASE_SUPER_PASSWORD is unset." >&2
+
+  warn_superuser_config
+  return 2
+}
+
+sync_roles() {
+  if ! connect_with_superuser; then
     return 2
   fi
-  local result=""
-  if ! result=$("${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
-      psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${target_role}'" 2>/dev/null); then
-    warn_superuser_config
-    return 2
+
+  local exec_env=("${compose_cmd[@]}" exec -T db)
+  local psql_env=(psql -v ON_ERROR_STOP=1 -U "$active_super_role" -d postgres)
+  local env_args=()
+  if [[ -n "$active_super_password" ]]; then
+    env_args=(env PGPASSWORD="$active_super_password")
   fi
-  result="$(tr -d '[:space:]' <<<"$result")"
-  if [[ "$result" == "1" ]]; then
-    return 0
-  fi
-  if ! "${compose_cmd[@]}" exec -T db env PGPASSWORD="$super_password" \
-      psql -v ON_ERROR_STOP=1 -U "$super_role" -d postgres \
-      -v target_role="$target_role" -v target_password="$PGPASSWORD" <<'SQL'; then
+
+  if ! "${exec_env[@]}" "${env_args[@]}" "${psql_env[@]}" \
+      -v target_role="$PGUSER" \
+      -v target_password="$PGPASSWORD" \
+      -v desired_super_role="$super_role" \
+      -v desired_super_password="$super_password" <<'SQL'
 DO $$
 DECLARE
-  role_name text := :'target_role';
-  role_password text := :'target_password';
+  target_role text := nullif(:'target_role', '');
+  target_password text := :'target_password';
+  desired_super_role text := nullif(:'desired_super_role', '');
+  desired_super_password text := :'desired_super_password';
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
-    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L SUPERUSER', role_name, role_password);
-  ELSE
-    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', role_name, role_password);
+  IF target_role IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
+      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+    ELSE
+      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+    END IF;
   END IF;
-END
-$$;
+
+  IF desired_super_role IS NOT NULL AND desired_super_role <> target_role THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = desired_super_role) THEN
+      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
+    ELSE
+      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
+    END IF;
+  END IF;
+END $$;
 SQL
+  then
     warn_superuser_config
     return 2
   fi
-  echo "ℹ️  Ensured Postgres role '$target_role' exists and password updated using superuser '$super_role'." >&2
+
+  if [[ "$active_super_role" != "$PGUSER" ]]; then
+    wait_for_user "$PGUSER" "$PGPASSWORD" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$super_role" && "$super_role" != "$PGUSER" ]]; then
+    wait_for_user "$super_role" "$super_password" >/dev/null 2>&1 || true
+  fi
+
+  return 0
 }
 
 wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
 
-  if [[ -n "$super_role" && -n "$super_password" && "$super_role" != "$PGUSER" ]]; then
-    if ! wait_for_user "$super_role" "$super_password" "$attempts" "$delay" >/dev/null 2>&1; then
-      warn_superuser_config
-      return 2
-    fi
-    if ! ensure_pg_role; then
-      return 2
-    fi
+  if ! sync_roles; then
+    return 2
   fi
 
   wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay"
@@ -147,9 +181,6 @@ case "$cmd" in
     if ! wait_for_pg; then
       exit 2
     fi
-    if ! ensure_pg_role; then
-      exit 2
-    fi
     run_pg_isready "$PGUSER" "$PGPASSWORD"
     ;;
   restart)
@@ -158,9 +189,6 @@ case "$cmd" in
     ;;
   health)
     if ! wait_for_pg; then
-      exit 2
-    fi
-    if ! ensure_pg_role; then
       exit 2
     fi
     run_pg_isready "$PGUSER" "$PGPASSWORD"
