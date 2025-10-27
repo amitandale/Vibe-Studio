@@ -124,10 +124,10 @@ resolve_digest_for_base() {
 declare -A default_tags=(
   [STUDIO_IMAGE]="supabase/studio:2025.10.20-sha-5005fc6",
   [KONG_IMAGE]="kong:2.8.1",
-  [AUTH_IMAGE]="supabase/gotrue:v2.180.0",
+  [AUTH_IMAGE]="supabase/gotrue:v2.181.0-rc.15",
   [REST_IMAGE]="postgrest/postgrest:v13.0.7",
   [REALTIME_IMAGE]="supabase/realtime:v2.56.0",
-  [STORAGE_IMAGE]="supabase/storage-api:v1.28.1",
+  [STORAGE_IMAGE]="supabase/storage-api:v1.28.2",
   [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.8.0",
   [META_IMAGE]="supabase/postgres-meta:v0.93.0",
   [EDGE_IMAGE]="supabase/edge-runtime:v1.69.14",
