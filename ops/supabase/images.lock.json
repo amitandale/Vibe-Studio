@@ -4,7 +4,7 @@
     "AUTH_IMAGE": "supabase/gotrue:v2.181.0-rc.12@sha256:pending",
     "REST_IMAGE": "postgrest/postgrest:latest@sha256:pending",
     "REALTIME_IMAGE": "supabase/realtime:v2.56.2@sha256:pending",
-    "STORAGE_IMAGE": "supabase/storage-api:latest@sha256:pending",
+    "STORAGE_IMAGE": "supabase/storage-api:v1.28.2@sha256:pending",
     "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.30.1@sha256:pending",
     "EDGE_IMAGE": "supabase/edge-runtime:v1.69.14@sha256:pending",
     "KONG_IMAGE": "kong/kong-gateway:latest@sha256:pending"
