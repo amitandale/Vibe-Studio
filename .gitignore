@@ -28,3 +28,9 @@ dist-ssr
 .env
 .next/
 next-env.d.ts
+
+# Supabase lanes (secrets on runner only)
+ops/supabase/lanes/*.env
+!ops/supabase/lanes/.env.template
+ops/supabase/lanes/superusers.env
+!ops/supabase/lanes/superusers.env.template
