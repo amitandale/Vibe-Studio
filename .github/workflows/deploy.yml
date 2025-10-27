@@ -67,6 +67,15 @@ jobs:
           echo "LANE=${lane}" >> "$GITHUB_ENV"
           echo "lane=${lane}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure Supabase state directory
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          state_root="${{ steps.vars.outputs.deploy_dir }}/../.supabase-state"
+          mkdir -p "$state_root/lanes"
+          chmod 700 "$state_root" "$state_root/lanes"
+          echo "SUPABASE_STATE_DIR=$state_root" >> "$GITHUB_ENV"
+
       - name: Ensure lane environment is provisioned
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}

@@ -16,7 +16,7 @@ The GitHub Actions workflow invokes these scripts, so each dependency must be av
 
 ## Generate lane environment files
 
-Lane configuration files live under `ops/supabase/lanes/<lane>.env` and are **not** committed to git. Each file stores the lane-specific ports, credentials, and JWT secrets. Use the provisioning script to create them:
+Lane configuration files persist in the Supabase state directory (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`) and a working copy is written to `ops/supabase/lanes/<lane>.env`. Each file stores the lane-specific ports, credentials, and JWT secrets. Use the provisioning script to create them:
 
 ```bash
 scripts/supabase/provision_lane_env.sh main --pg-password '<postgres-password>'
@@ -27,7 +27,7 @@ scripts/supabase/provision_lane_env.sh codex --pg-password '<postgres-password>'
 - Pass the Postgres password that should be used for the `postgres` role inside the lane.
 - The script generates fresh `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` values using Python's `secrets` module.
 - Override the edge runtime environment file path with `--edge-env-file` if your runner uses a different location.
-- Supply `--pg-super-role` / `--pg-super-password` when the fallback maintenance account differs from the default `supabase_admin` so automation can recreate the primary role if it goes missing.
+- Supply `--pg-super-role` / `--pg-super-password` when the fallback maintenance account differs from the default `supabase_admin` so automation can recreate the primary role if it goes missing. You can also edit `$SUPABASE_STATE_DIR/superusers.env` directly before rerunning the script.
 - Use `--force` to replace an existing file (for example, when rotating credentials).
 
 The script marks each generated file with `chmod 600` to keep secrets protected on disk.

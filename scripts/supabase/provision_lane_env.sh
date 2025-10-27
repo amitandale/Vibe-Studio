@@ -90,7 +90,12 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 lanes_dir="$root/ops/supabase/lanes"
 mkdir -p "$lanes_dir"
 
-superusers_file="$lanes_dir/superusers.env"
+state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
+state_lanes_dir="$state_root/lanes"
+mkdir -p "$state_lanes_dir"
+chmod 700 "$state_root" "$state_lanes_dir" 2>/dev/null || true
+
+superusers_file="$state_root/superusers.env"
 if [[ ! -f "$superusers_file" ]]; then
   echo "Creating $superusers_file" >&2
   umask 177
@@ -113,7 +118,8 @@ set -a; [[ -f "$superusers_file" ]] && source "$superusers_file"; set +a
 config_super_role="${!role_key:-}"
 config_super_password="${!password_key:-}"
 
-env_file="$lanes_dir/${lane}.env"
+state_env_file="$state_lanes_dir/${lane}.env"
+working_env_file="$lanes_dir/${lane}.env"
 existing_pg_password=""
 existing_edge_env_file=""
 existing_jwt_secret=""
@@ -121,9 +127,9 @@ existing_anon_key=""
 existing_service_key=""
 existing_super_role=""
 existing_super_password=""
-if [[ -f "$env_file" ]]; then
+if [[ -f "$state_env_file" ]]; then
   # shellcheck disable=SC1090
-  set -a; source "$env_file"; set +a
+  set -a; source "$state_env_file"; set +a
   existing_pg_password="${PGPASSWORD:-}"
   existing_edge_env_file="${EDGE_ENV_FILE:-}"
   existing_jwt_secret="${JWT_SECRET:-}"
@@ -132,7 +138,7 @@ if [[ -f "$env_file" ]]; then
   existing_super_role="${SUPABASE_SUPER_ROLE:-}"
   existing_super_password="${SUPABASE_SUPER_PASSWORD:-}"
   if [[ "$force" != true ]]; then
-    echo "Updating existing $env_file" >&2
+    echo "Updating existing $state_env_file" >&2
   fi
 fi
 
@@ -212,6 +218,9 @@ update_superusers_file() {
 update_superusers_file "$role_key" "$pg_super_role"
 update_superusers_file "$password_key" "$pg_super_password"
 
+cp "$superusers_file" "$lanes_dir/superusers.env"
+chmod 600 "$lanes_dir/superusers.env"
+
 if [[ -z "$existing_jwt_secret" ]]; then
   existing_jwt_secret="$(openssl rand -base64 32)"
 fi
@@ -224,7 +233,7 @@ fi
 
 old_umask="$(umask)"
 umask 177
-cat <<ENV >"$env_file"
+cat <<ENV >"$state_env_file"
 COMPOSE_PROJECT_NAME=supa-${lane}
 LANE=${lane}
 VOL_NS=${lane}
@@ -245,11 +254,14 @@ JWT_SECRET=${existing_jwt_secret}
 ANON_KEY=${existing_anon_key}
 SERVICE_ROLE_KEY=${existing_service_key}
 ENV
-chmod 600 "$env_file"
+chmod 600 "$state_env_file"
 umask "$old_umask"
 
+cp "$state_env_file" "$working_env_file"
+chmod 600 "$working_env_file"
+
 cat <<MSG
-✅ Supabase lane '$lane' environment written to $env_file
+✅ Supabase lane '$lane' environment written to $state_env_file
    Postgres password: ${pg_password:+(stored)}
    Superuser role: $pg_super_role
 MSG

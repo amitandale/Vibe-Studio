@@ -24,9 +24,9 @@ Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, a
 ./scripts/supabase/provision_lane_env.sh codex
 ```
 
-The script creates `ops/supabase/lanes/<lane>.env` with mode `600` alongside `ops/supabase/lanes/superusers.env`, which stores lane-specific fallback superuser credentials for future deploys. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release.
+The script stores canonical credentials inside the Supabase state directory (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`) and writes a working copy to `ops/supabase/lanes/<lane>.env` with mode `600`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release.
 
-If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `ops/supabase/lanes/superusers.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role automatically when it goes missing.
+If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `$SUPABASE_STATE_DIR/superusers.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role automatically when it goes missing.
 
 ## 📘 Read Next
 

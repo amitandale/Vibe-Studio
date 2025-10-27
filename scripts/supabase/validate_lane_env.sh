@@ -20,7 +20,14 @@ case "$lane" in
 esac
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-env_file="$root/ops/supabase/lanes/${lane}.env"
+state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
+state_env_file="$state_root/lanes/${lane}.env"
+working_env_file="$root/ops/supabase/lanes/${lane}.env"
+if [[ -f "$state_env_file" ]]; then
+  env_file="$state_env_file"
+else
+  env_file="$working_env_file"
+fi
 
 fail() {
   echo "❌ $1" >&2
@@ -31,7 +38,7 @@ fail() {
 }
 
 if [[ ! -f "$env_file" ]]; then
-  fail "Lane environment file $env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane on the runner."
+  fail "Lane environment file $working_env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane on the runner."
 fi
 
 if grep -q '{{' "$env_file"; then

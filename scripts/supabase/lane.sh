@@ -11,9 +11,15 @@ done
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 compose="$root/ops/supabase/docker-compose.yml"
-envfile="$root/ops/supabase/lanes/${lane}.env"
-if [[ ! -f "$envfile" ]]; then
-  echo "lane env file $envfile missing; run scripts/supabase/provision_lane_env.sh $lane --random-pg-password" >&2
+state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
+state_envfile="$state_root/lanes/${lane}.env"
+repo_envfile="$root/ops/supabase/lanes/${lane}.env"
+if [[ -f "$state_envfile" ]]; then
+  envfile="$state_envfile"
+elif [[ -f "$repo_envfile" ]]; then
+  envfile="$repo_envfile"
+else
+  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --random-pg-password" >&2
   exit 1
 fi
 export ENV_FILE="$envfile"

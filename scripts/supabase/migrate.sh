@@ -10,9 +10,15 @@ done
 
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-envfile="$root/ops/supabase/lanes/${lane}.env"
-if [[ ! -f "$envfile" ]]; then
-  echo "lane env file $envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
+state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
+state_envfile="$state_root/lanes/${lane}.env"
+repo_envfile="$root/ops/supabase/lanes/${lane}.env"
+if [[ -f "$state_envfile" ]]; then
+  envfile="$state_envfile"
+elif [[ -f "$repo_envfile" ]]; then
+  envfile="$repo_envfile"
+else
+  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
   exit 1
 fi
 # shellcheck disable=SC1090
