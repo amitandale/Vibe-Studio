@@ -41,7 +41,7 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
    ```bash
    ./scripts/supabase/refresh_image_pins.sh
    ```
-  This resolves each Supabase tag to the latest registry digest so your local checkout matches what CI will deploy. If Supabase removes an advertised tag (e.g. the upstream compose file references a build that never shipped), the helper automatically falls forward to the newest tag with the same prefix from Docker Hub and records the change in the lock file. When Docker Hub cannot return a compatible tag (network restrictions, delayed releases, etc.), the script falls back to a curated, known-good baseline (currently Postgres `15.14.1.026`) so pipelines remain deployable.
+  This resolves each Supabase tag to the latest registry digest so your local checkout matches what CI will deploy. If Supabase removes an advertised tag (e.g. the upstream compose file references a build that never shipped), the helper automatically falls forward to the newest tag with the same prefix from Docker Hub and records the change in the lock file. When Docker Hub cannot return a compatible tag (network restrictions, delayed releases, etc.), the script falls back to a curated, known-good baseline (currently Postgres `15.8.1.085`) so pipelines remain deployable.
 3. **Provision lane environment files** (CI will also auto-provision on first run):
    - Auto-generate strong passwords and secrets (default behaviour):
      ```bash

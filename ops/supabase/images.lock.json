@@ -1,12 +1,17 @@
 {
   "images": {
-    "DB_IMAGE": "supabase/postgres:15.14.1.026@sha256:pending",
-    "AUTH_IMAGE": "supabase/gotrue:v2.181.0-rc.15@sha256:pending",
-    "REST_IMAGE": "postgrest/postgrest:latest@sha256:pending",
-    "REALTIME_IMAGE": "supabase/realtime:v2.56.2@sha256:pending",
-    "STORAGE_IMAGE": "supabase/storage-api:v1.28.2@sha256:pending",
-    "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.30.1@sha256:pending",
+    "STUDIO_IMAGE": "supabase/studio:2025.10.20-sha-5005fc6@sha256:pending",
+    "KONG_IMAGE": "kong:2.8.1@sha256:pending",
+    "AUTH_IMAGE": "supabase/gotrue:v2.180.0@sha256:pending",
+    "REST_IMAGE": "postgrest/postgrest:v13.0.7@sha256:pending",
+    "REALTIME_IMAGE": "supabase/realtime:v2.56.0@sha256:pending",
+    "STORAGE_IMAGE": "supabase/storage-api:v1.28.1@sha256:pending",
+    "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.8.0@sha256:pending",
+    "META_IMAGE": "supabase/postgres-meta:v0.93.0@sha256:pending",
     "EDGE_IMAGE": "supabase/edge-runtime:v1.69.14@sha256:pending",
-    "KONG_IMAGE": "kong/kong-gateway:latest@sha256:pending"
+    "ANALYTICS_IMAGE": "supabase/logflare:1.22.6@sha256:pending",
+    "DB_IMAGE": "supabase/postgres:15.8.1.085@sha256:pending",
+    "VECTOR_IMAGE": "timberio/vector:0.28.1-alpine@sha256:pending",
+    "SUPAVISOR_IMAGE": "supabase/supavisor:2.7.3@sha256:pending"
   }
 }

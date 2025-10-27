@@ -413,7 +413,21 @@ required_vars=(
   JWT_SECRET ANON_KEY SERVICE_ROLE_KEY
 )
 
-image_vars=(DB_IMAGE AUTH_IMAGE REST_IMAGE REALTIME_IMAGE STORAGE_IMAGE IMGPROXY_IMAGE EDGE_IMAGE KONG_IMAGE)
+image_vars=(
+  STUDIO_IMAGE
+  KONG_IMAGE
+  AUTH_IMAGE
+  REST_IMAGE
+  REALTIME_IMAGE
+  STORAGE_IMAGE
+  IMGPROXY_IMAGE
+  META_IMAGE
+  EDGE_IMAGE
+  ANALYTICS_IMAGE
+  DB_IMAGE
+  VECTOR_IMAGE
+  SUPAVISOR_IMAGE
+)
 
 if [[ -f "$env_file" ]]; then
   for var in "${required_vars[@]}"; do
@@ -483,14 +497,19 @@ ANON_KEY=${anon_key}
 SERVICE_ROLE_KEY=${service_role_key}
 
 # Image pins (managed via ops/supabase/images.lock.json)
-DB_IMAGE=${lock_images[DB_IMAGE]}
+STUDIO_IMAGE=${lock_images[STUDIO_IMAGE]}
+KONG_IMAGE=${lock_images[KONG_IMAGE]}
 AUTH_IMAGE=${lock_images[AUTH_IMAGE]}
 REST_IMAGE=${lock_images[REST_IMAGE]}
 REALTIME_IMAGE=${lock_images[REALTIME_IMAGE]}
 STORAGE_IMAGE=${lock_images[STORAGE_IMAGE]}
 IMGPROXY_IMAGE=${lock_images[IMGPROXY_IMAGE]}
+META_IMAGE=${lock_images[META_IMAGE]}
 EDGE_IMAGE=${lock_images[EDGE_IMAGE]}
-KONG_IMAGE=${lock_images[KONG_IMAGE]}
+ANALYTICS_IMAGE=${lock_images[ANALYTICS_IMAGE]}
+DB_IMAGE=${lock_images[DB_IMAGE]}
+VECTOR_IMAGE=${lock_images[VECTOR_IMAGE]}
+SUPAVISOR_IMAGE=${lock_images[SUPAVISOR_IMAGE]}
 ENV
 chmod 600 "$env_file"
 umask "$old_umask"
