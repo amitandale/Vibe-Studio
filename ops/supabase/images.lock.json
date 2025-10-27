@@ -1,12 +1,12 @@
 {
   "images": {
-    "DB_IMAGE": "supabase/postgres:15.8.1.135@sha256:771a1283c295cce81b0301b53f7ad25a59be12bfaa7c95f01f2e6d69f02ab1d6",
-    "AUTH_IMAGE": "supabase/gotrue:v2.180.0@sha256:55b2a88a28a4735ea21ad5237c7e03098c26d47041cf1d6914b9e6c026fe80fd",
-    "REST_IMAGE": "postgrest/postgrest:v13.0.7@sha256:6d51f01dc26ce3c39267e4422516c52f555d4f20026f6e8d40ccdb5985b074b9",
-    "REALTIME_IMAGE": "supabase/realtime:v2.56.0@sha256:09c38ecc5c0e524f8ac5c5f10682b33b50f6e8f8c691e2c1c73828c7fddd1a87",
-    "STORAGE_IMAGE": "supabase/storage-api:v1.28.1@sha256:3345c324c53fb7d407caae0d7ca59c0f716b846e5e301e31edb9390716443b61",
-    "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.15.0@sha256:db2d1a8397a9f82d5f2523e7ddf3c8601b8d4b1661df94f04fdf46b3ca0a3a52",
-    "EDGE_IMAGE": "supabase/edge-runtime:v1.49.3@sha256:af3523d4f21a5b0cb289b3d1c4c0ede4e6d72d0fd7aa320c6f4c0e3e5d5efbb9",
-    "KONG_IMAGE": "kong:3.4.3@sha256:b6fc5fbc56cbe341b83cfac3a7c33dcb162d432c50b0f1adf7eecca40f6d2770"
+    "DB_IMAGE": "supabase/postgres:15.14.1.026@sha256:pending",
+    "AUTH_IMAGE": "supabase/gotrue:v2.181.0-rc.12@sha256:pending",
+    "REST_IMAGE": "postgrest/postgrest:latest@sha256:pending",
+    "REALTIME_IMAGE": "supabase/realtime:v2.56.2@sha256:pending",
+    "STORAGE_IMAGE": "supabase/storage-api:latest@sha256:pending",
+    "IMGPROXY_IMAGE": "darthsim/imgproxy:v3.30.1@sha256:pending",
+    "EDGE_IMAGE": "supabase/edge-runtime:v1.69.14@sha256:pending",
+    "KONG_IMAGE": "kong/kong-gateway:latest@sha256:pending"
   }
 }

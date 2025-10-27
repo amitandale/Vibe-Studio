@@ -122,14 +122,14 @@ resolve_digest_for_base() {
 }
 
 declare -A default_tags=(
-  [DB_IMAGE]="supabase/postgres:15.8.1.135",
-  [AUTH_IMAGE]="supabase/gotrue:v2.180.0",
-  [REST_IMAGE]="postgrest/postgrest:v13.0.7",
-  [REALTIME_IMAGE]="supabase/realtime:v2.56.0",
-  [STORAGE_IMAGE]="supabase/storage-api:v1.28.1",
-  [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.15.0",
-  [EDGE_IMAGE]="supabase/edge-runtime:v1.49.3",
-  [KONG_IMAGE]="kong:3.4.3"
+  [DB_IMAGE]="supabase/postgres:15.14.1.026",
+  [AUTH_IMAGE]="supabase/gotrue:v2.181.0-rc.12",
+  [REST_IMAGE]="postgrest/postgrest:latest",
+  [REALTIME_IMAGE]="supabase/realtime:v2.56.2",
+  [STORAGE_IMAGE]="supabase/storage-api:latest",
+  [IMGPROXY_IMAGE]="darthsim/imgproxy:v3.30.1",
+  [EDGE_IMAGE]="supabase/edge-runtime:v1.69.14",
+  [KONG_IMAGE]="kong/kong-gateway:latest"
 )
 
 mapfile -t entries < <(jq -r '.images | to_entries[] | "\(.key)=\(.value)"' "$lock_file")
