@@ -89,7 +89,8 @@ superuser so the deploy workflow can recreate the lane-specific role (usually `p
 
 If you do not know the values, connect directly on the host and inspect available roles (for example, with
 `docker exec -it supa-<lane>-db-1 psql -U <known_superuser> -d postgres -c "\\du"`). Once the env file contains valid
-credentials, rerun the deploy workflow and it will reconcile the lane role automatically.
+credentials, rerun the deploy workflow. The lane helper shells into the database container and recreates or resets the
+stored roles using those credentials before migrations run, so the lane is healed automatically on the next deploy.
 
 4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`

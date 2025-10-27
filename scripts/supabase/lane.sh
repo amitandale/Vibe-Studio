@@ -46,6 +46,41 @@ warn_superuser_config() {
    See docs/SUPABASE_SETUP.md#restore-existing-superusers for recovery steps on reused volumes.
 MSG
 }
+repair_superuser() {
+  local exec_env=("${compose_cmd[@]}" exec -T db)
+
+  "${exec_env[@]}" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    -v target_role="$PGUSER" \
+    -v target_password="$PGPASSWORD" \
+    -v desired_super_role="$super_role" \
+    -v desired_super_password="$super_password" <<'SQL'
+DO $$
+DECLARE
+  target_role text := nullif(:'target_role', '');
+  target_password text := :'target_password';
+  desired_super_role text := nullif(:'desired_super_role', '');
+  desired_super_password text := :'desired_super_password';
+BEGIN
+  IF target_role IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
+      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+    ELSE
+      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
+    END IF;
+  END IF;
+
+  IF desired_super_role IS NOT NULL AND desired_super_role <> target_role THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = desired_super_role) THEN
+      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
+    ELSE
+      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
+    END IF;
+  END IF;
+END $$;
+SQL
+  || return 1
+}
+
 
 run_pg_isready() {
   local user="$1"
@@ -108,7 +143,15 @@ connect_with_superuser() {
 
 sync_roles() {
   if ! connect_with_superuser; then
-    return 2
+    if ! repair_superuser; then
+      warn_superuser_config
+      return 2
+    fi
+
+    if ! connect_with_superuser; then
+      warn_superuser_config
+      return 2
+    fi
   fi
 
   local exec_env=("${compose_cmd[@]}" exec -T db)
