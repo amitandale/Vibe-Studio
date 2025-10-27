@@ -67,6 +67,41 @@ jobs:
           echo "LANE=${lane}" >> "$GITHUB_ENV"
           echo "lane=${lane}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure Supabase superuser overrides
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+          SUPABASE_MAIN_SUPER_ROLE: ${{ secrets.SUPABASE_MAIN_SUPER_ROLE }}
+          SUPABASE_MAIN_SUPER_PASSWORD: ${{ secrets.SUPABASE_MAIN_SUPER_PASSWORD }}
+          SUPABASE_WORK_SUPER_ROLE: ${{ secrets.SUPABASE_WORK_SUPER_ROLE }}
+          SUPABASE_WORK_SUPER_PASSWORD: ${{ secrets.SUPABASE_WORK_SUPER_PASSWORD }}
+          SUPABASE_CODEX_SUPER_ROLE: ${{ secrets.SUPABASE_CODEX_SUPER_ROLE }}
+          SUPABASE_CODEX_SUPER_PASSWORD: ${{ secrets.SUPABASE_CODEX_SUPER_PASSWORD }}
+        run: |
+          lane_role=""
+          lane_password=""
+          case "$LANE" in
+            main)
+              lane_role="${SUPABASE_MAIN_SUPER_ROLE:-}"
+              lane_password="${SUPABASE_MAIN_SUPER_PASSWORD:-}"
+              ;;
+            work)
+              lane_role="${SUPABASE_WORK_SUPER_ROLE:-}"
+              lane_password="${SUPABASE_WORK_SUPER_PASSWORD:-}"
+              ;;
+            codex)
+              lane_role="${SUPABASE_CODEX_SUPER_ROLE:-}"
+              lane_password="${SUPABASE_CODEX_SUPER_PASSWORD:-}"
+              ;;
+          esac
+          if [[ -n "$lane_role" ]]; then
+            echo "SUPABASE_SUPER_ROLE_OVERRIDE=$lane_role" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "$lane_password" ]]; then
+            echo "SUPABASE_SUPER_PASSWORD_OVERRIDE=$lane_password" >> "$GITHUB_ENV"
+          fi
+
       - name: Refresh Supabase image pins
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}

@@ -82,6 +82,10 @@ superuser so the deploy workflow can recreate the lane-specific role (usually `p
 If you do not know the values, connect directly on the host and inspect available roles (for example, with
 `docker exec -it supa-<lane>-db-1 psql -U <known_superuser> -d postgres -c "\\du"`). Once the env file contains valid
 credentials, rerun the deploy workflow and it will reconcile the lane role automatically.
+
+> 💡 **CI tip:** Populate matching GitHub secrets named `SUPABASE_<LANE>_SUPER_ROLE` and `SUPABASE_<LANE>_SUPER_PASSWORD`. The
+> deploy workflow reads those values and overrides the lane `.env` before provisioning so automation always has the correct
+> superuser credentials without exposing them in git.
 4. **Replace temporary JWT keys** (recommended for production):
    - Generate with Supabase CLI: `supabase secrets set --from-env lane.env`
    - Or use the Supabase dashboard tools to mint signed keys.

@@ -34,6 +34,8 @@ The script creates `ops/supabase/lanes/<lane>.env` with mode `600` and placehold
 
 If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` so the deploy workflow can log in with that account and recreate the `PGUSER` role automatically when it goes missing.
 
+For CI, mirror those credentials into GitHub secrets named `SUPABASE_<LANE>_SUPER_ROLE` and `SUPABASE_<LANE>_SUPER_PASSWORD`. The deploy workflow reads the matching secret for the active lane and overrides the `.env` during provisioning so automated deploys always have the correct superuser without exposing it in git.
+
 ## 📘 Read Next
 
 - [Full Supabase Setup](./docs/SUPABASE_SETUP.md)

@@ -157,9 +157,17 @@ while [[ $# -gt 0 ]]; do
       echo "unknown option '$1'" >&2
       usage
       exit 2
-      ;;
+      ;; 
   esac
 done
+
+if [[ -z "$pg_super_role" && -n "${SUPABASE_SUPER_ROLE_OVERRIDE:-}" ]]; then
+  pg_super_role="$SUPABASE_SUPER_ROLE_OVERRIDE"
+fi
+
+if [[ -z "$pg_super_password" && -n "${SUPABASE_SUPER_PASSWORD_OVERRIDE:-}" ]]; then
+  pg_super_password="$SUPABASE_SUPER_PASSWORD_OVERRIDE"
+fi
 
 generated_password=false
 

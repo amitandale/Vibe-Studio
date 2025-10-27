@@ -33,6 +33,7 @@ openssl version
 - [ ] Supabase services started with `./scripts/supabase/lane.sh <lane> start`
 - [ ] Edge runtime env files mounted on the host (see template comments)
 - [ ] Legacy clusters provide `SUPABASE_SUPER_ROLE`/`SUPABASE_SUPER_PASSWORD` in each lane env
+- [ ] (Optional) Matching GitHub secrets `SUPABASE_<LANE>_SUPER_ROLE` and `SUPABASE_<LANE>_SUPER_PASSWORD` populated for CI overrides
 
 ## 🔍 Verification Commands
 
