@@ -123,7 +123,7 @@ resolve_digest_for_base() {
 
 declare -A default_tags=(
   [DB_IMAGE]="supabase/postgres:15.14.1.026",
-  [AUTH_IMAGE]="supabase/gotrue:v2.181.0-rc.12",
+  [AUTH_IMAGE]="supabase/gotrue:v2.181.0-rc.15",
   [REST_IMAGE]="postgrest/postgrest:latest",
   [REALTIME_IMAGE]="supabase/realtime:v2.56.2",
   [STORAGE_IMAGE]="supabase/storage-api:v1.28.2",

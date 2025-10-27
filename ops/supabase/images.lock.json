@@ -1,7 +1,7 @@
 {
   "images": {
     "DB_IMAGE": "supabase/postgres:15.14.1.026@sha256:pending",
-    "AUTH_IMAGE": "supabase/gotrue:v2.181.0-rc.12@sha256:pending",
+    "AUTH_IMAGE": "supabase/gotrue:v2.181.0-rc.15@sha256:pending",
     "REST_IMAGE": "postgrest/postgrest:latest@sha256:pending",
     "REALTIME_IMAGE": "supabase/realtime:v2.56.2@sha256:pending",
     "STORAGE_IMAGE": "supabase/storage-api:v1.28.2@sha256:pending",
