@@ -73,26 +73,20 @@ repair_superuser() {
     -v target_password="$PGPASSWORD" \
     -v desired_super_role="$super_role" \
     -v desired_super_password="$super_password" <<'SQL'
-\set target_role :'target_role'
-\set target_password :'target_password'
-\set desired_super_role :'desired_super_role'
-\set desired_super_password :'desired_super_password'
-\if :target_role <> ''
-  SELECT CASE
-           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
-             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-         END;
+SELECT CASE
+         WHEN :'target_role' = '' THEN NULL
+         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
+           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+       END;
 \gexec
-\endif
-\if :desired_super_role <> '' && :desired_super_role <> :target_role
-  SELECT CASE
-           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
-             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-         END;
+SELECT CASE
+         WHEN :'desired_super_role' = '' OR :'desired_super_role' = :'target_role' THEN NULL
+         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
+           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+       END;
 \gexec
-\endif
 SQL
   then
     return 1
@@ -184,26 +178,20 @@ sync_roles() {
       -v target_password="$PGPASSWORD" \
       -v desired_super_role="$super_role" \
       -v desired_super_password="$super_password" <<'SQL'
-\set target_role :'target_role'
-\set target_password :'target_password'
-\set desired_super_role :'desired_super_role'
-\set desired_super_password :'desired_super_password'
-\if :target_role <> ''
-  SELECT CASE
-           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
-             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
-         END;
+SELECT CASE
+         WHEN :'target_role' = '' THEN NULL
+         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
+           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+       END;
 \gexec
-\endif
-\if :desired_super_role <> '' && :desired_super_role <> :target_role
-  SELECT CASE
-           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
-             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
-         END;
+SELECT CASE
+         WHEN :'desired_super_role' = '' OR :'desired_super_role' = :'target_role' THEN NULL
+         WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
+           THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+         ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+       END;
 \gexec
-\endif
 SQL
   then
     warn_superuser_config
