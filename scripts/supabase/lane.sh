@@ -33,6 +33,9 @@ if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
 fi
 
 super_role="${SUPABASE_SUPER_ROLE:-${PGUSER:-}}"
+if [[ "$super_role" == supabase_admin_${lane} ]]; then
+  super_role="supabase_admin"
+fi
 super_password="${SUPABASE_SUPER_PASSWORD:-${PGPASSWORD:-}}"
 active_super_role=""
 active_super_password=""
@@ -70,29 +73,26 @@ repair_superuser() {
     -v target_password="$PGPASSWORD" \
     -v desired_super_role="$super_role" \
     -v desired_super_password="$super_password" <<'SQL'
-DO $$
-DECLARE
-  target_role text := nullif(:'target_role', '');
-  target_password text := :'target_password';
-  desired_super_role text := nullif(:'desired_super_role', '');
-  desired_super_password text := :'desired_super_password';
-BEGIN
-  IF target_role IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
-      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
-    ELSE
-      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
-    END IF;
-  END IF;
-
-  IF desired_super_role IS NOT NULL AND desired_super_role <> target_role THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = desired_super_role) THEN
-      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
-    ELSE
-      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
-    END IF;
-  END IF;
-END $$;
+\set target_role :'target_role'
+\set target_password :'target_password'
+\set desired_super_role :'desired_super_role'
+\set desired_super_password :'desired_super_password'
+\if :target_role <> ''
+  SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
+             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+         END;
+\gexec
+\endif
+\if :desired_super_role <> '' && :desired_super_role <> :target_role
+  SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
+             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+         END;
+\gexec
+\endif
 SQL
   then
     return 1
@@ -184,29 +184,26 @@ sync_roles() {
       -v target_password="$PGPASSWORD" \
       -v desired_super_role="$super_role" \
       -v desired_super_password="$super_password" <<'SQL'
-DO $$
-DECLARE
-  target_role text := nullif(:'target_role', '');
-  target_password text := :'target_password';
-  desired_super_role text := nullif(:'desired_super_role', '');
-  desired_super_password text := :'desired_super_password';
-BEGIN
-  IF target_role IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
-      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
-    ELSE
-      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', target_role, target_password);
-    END IF;
-  END IF;
-
-  IF desired_super_role IS NOT NULL AND desired_super_role <> target_role THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = desired_super_role) THEN
-      EXECUTE format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
-    ELSE
-      EXECUTE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', desired_super_role, desired_super_password);
-    END IF;
-  END IF;
-END $$;
+\set target_role :'target_role'
+\set target_password :'target_password'
+\set desired_super_role :'desired_super_role'
+\set desired_super_password :'desired_super_password'
+\if :target_role <> ''
+  SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_role')
+             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'target_role', :'target_password')
+         END;
+\gexec
+\endif
+\if :desired_super_role <> '' && :desired_super_role <> :target_role
+  SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'desired_super_role')
+             THEN format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+           ELSE format('ALTER ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', :'desired_super_role', :'desired_super_password')
+         END;
+\gexec
+\endif
 SQL
   then
     warn_superuser_config
