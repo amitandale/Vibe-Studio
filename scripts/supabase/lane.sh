@@ -48,8 +48,24 @@ MSG
 }
 repair_superuser() {
   local exec_env=("${compose_cmd[@]}" exec -T db)
+  local repair_role="$super_role"
+  local repair_password="$super_password"
 
-  if ! "${exec_env[@]}" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  if [[ -z "$repair_role" ]]; then
+    repair_role="$PGUSER"
+    repair_password="$PGPASSWORD"
+  fi
+
+  if [[ -z "$repair_role" ]]; then
+    return 1
+  fi
+
+  local env_args=()
+  if [[ -n "$repair_password" ]]; then
+    env_args=(env PGPASSWORD="$repair_password")
+  fi
+
+  if ! "${exec_env[@]}" "${env_args[@]}" psql -v ON_ERROR_STOP=1 -U "$repair_role" -d postgres \
     -v target_role="$PGUSER" \
     -v target_password="$PGPASSWORD" \
     -v desired_super_role="$super_role" \
