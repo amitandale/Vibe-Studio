@@ -11,7 +11,7 @@ Options:
   --interactive              Prompt for the Postgres password.
   --pg-password VALUE        Provide the Postgres password non-interactively.
   --random-pg-password       Generate a strong Postgres password automatically.
-  --pg-super-role VALUE      Override the fallback superuser role (default: supabase_admin_<lane>).
+  --pg-super-role VALUE      Override the fallback superuser role (default: supabase_admin).
   --pg-super-password VALUE  Provide the fallback superuser password.
   --edge-env-file PATH       Override the edge runtime env file path.
   --force                    Overwrite the existing file without confirmation.
@@ -118,6 +118,10 @@ set -a; [[ -f "$superusers_file" ]] && source "$superusers_file"; set +a
 config_super_role="${!role_key:-}"
 config_super_password="${!password_key:-}"
 
+if [[ "$config_super_role" == supabase_admin_${lane} ]]; then
+  config_super_role="supabase_admin"
+fi
+
 state_env_file="$state_lanes_dir/${lane}.env"
 working_env_file="$lanes_dir/${lane}.env"
 existing_pg_password=""
@@ -137,6 +141,9 @@ if [[ -f "$state_env_file" ]]; then
   existing_service_key="${SERVICE_ROLE_KEY:-}"
   existing_super_role="${SUPABASE_SUPER_ROLE:-}"
   existing_super_password="${SUPABASE_SUPER_PASSWORD:-}"
+  if [[ "$existing_super_role" == supabase_admin_${lane} ]]; then
+    existing_super_role="supabase_admin"
+  fi
   if [[ "$force" != true ]]; then
     echo "Updating existing $state_env_file" >&2
   fi
@@ -188,7 +195,7 @@ if [[ -z "$pg_password" ]]; then
 fi
 
 if [[ -z "$pg_super_role" ]]; then
-  pg_super_role="${config_super_role:-${existing_super_role:-supabase_admin_${lane}}}"
+  pg_super_role="${config_super_role:-${existing_super_role:-supabase_admin}}"
 fi
 
 if [[ -z "$pg_super_password" ]]; then
