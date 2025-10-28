@@ -711,31 +711,28 @@ case "$cmd" in
       ps_json=""
       if ps_json=$("${compose_cmd[@]}" ps --format json 2>/dev/null); then
         if [[ -z "$ps_json" ]]; then
-          echo "docker compose ps --format json produced no output; aborting status check." >&2
-          exit 1
-        fi
-
-        services_json=""
-        if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then .Services else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
-          echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
-          exit 1
-        fi
-
-        missing=0
-        for svc in db kong; do
-          if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
-            missing=1
-            break
+          echo "ℹ️  docker compose ps --format json returned no data; falling back to text parsing." >&2
+        elif [[ "$ps_json" =~ ^[[:space:]]*[\{\[] ]]; then
+          services_json=""
+          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then .Services else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
+            echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
+            exit 1
           fi
-        done
-        if [[ $missing -eq 0 ]]; then
-          exit 0
-        fi
-      else
-        ps_json_status=$?
-        if [[ $ps_json_status -eq 0 ]]; then
-          echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
-          exit 1
+
+          missing=0
+          for svc in db kong; do
+            if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
+              missing=1
+              break
+            fi
+          done
+          if [[ $missing -eq 0 ]]; then
+            exit 0
+          fi
+        else
+          if [[ -n "${ps_json//[[:space:]]/}" ]]; then
+            echo "ℹ️  docker compose ps --format json returned non-JSON output; falling back to text parsing." >&2
+          fi
         fi
       fi
     fi
