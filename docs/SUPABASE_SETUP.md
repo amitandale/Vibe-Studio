@@ -26,11 +26,14 @@ Each Git branch class maps to its own long-lived Supabase lane. Every lane runs 
 
 ## 🔢 Port Allocation
 
-| Lane  | PGPORT | KONG_HTTP_PORT | EDGE_PORT |
-|-------|:------:|:--------------:|:---------:|
-| main  |  5433  |      8101      |    9901   |
-| work  |  5434  |      8102      |    9902   |
-| codex |  5435  |      8103      |    9903   |
+| Lane  | PGHOST_PORT | KONG_HTTP_PORT | EDGE_PORT |
+|-------|:-----------:|:--------------:|:---------:|
+| main  |     5433    |      8101      |    9901   |
+| work  |     5434    |      8102      |    9902   |
+| codex |     5435    |      8103      |    9903   |
+
+Each container continues to listen on port `5432`; the new `PGHOST_PORT` variable controls the host-side binding that Docker
+publishes for lane-specific connectivity.
 
 Volumes follow the pattern `supa-<lane>-db` and Compose project names default to `supa-<lane>`.
 

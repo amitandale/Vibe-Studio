@@ -23,7 +23,8 @@ else
 fi
 # shellcheck disable=SC1090
 set -a; source "$envfile"; set +a
-PGURL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
+PGURL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${pg_host_port}/${PGDATABASE}"
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib

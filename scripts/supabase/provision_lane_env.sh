@@ -147,6 +147,7 @@ existing_anon_key=""
 existing_service_key=""
 existing_super_role=""
 existing_super_password=""
+pg_host_port=""
 if [[ -f "$state_env_file" ]]; then
   # shellcheck disable=SC1090
   set -a; source "$state_env_file"; set +a
@@ -167,21 +168,21 @@ fi
 
 case "$lane" in
   main)
-    pg_port=5433
+    pg_host_port=5433
     pg_db="vibe_main"
     kong_port=8101
     edge_port=9901
     default_edge_env="/etc/supabase/edge-main.env"
     ;;
   work)
-    pg_port=5434
+    pg_host_port=5434
     pg_db="vibe_work"
     kong_port=8102
     edge_port=9902
     default_edge_env="/etc/supabase/edge-work.env"
     ;;
   codex)
-    pg_port=5435
+    pg_host_port=5435
     pg_db="vibe_codex"
     kong_port=8103
     edge_port=9903
@@ -276,13 +277,16 @@ fi
 
 old_umask="$(umask)"
 umask 177
+pg_container_port=5432
+
 cat <<ENV >"$state_env_file"
 COMPOSE_PROJECT_NAME=supa-${lane}
 LANE=${lane}
 VOL_NS=${lane}
 
 PGHOST=127.0.0.1
-PGPORT=${pg_port}
+PGHOST_PORT=${pg_host_port}
+PGPORT=${pg_container_port}
 PGDATABASE=${pg_db}
 PGUSER=postgres
 PGPASSWORD=${pg_password}

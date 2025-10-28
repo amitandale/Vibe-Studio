@@ -27,10 +27,113 @@ else
   echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --interactive --pg-super-role supabase_admin" >&2
   exit 1
 fi
+envfile_source="$envfile"
+
+cleanup_envfiles=()
+cleanup() {
+  local file
+  for file in "${cleanup_envfiles[@]}"; do
+    [[ -f "$file" ]] && rm -f "$file"
+  done
+}
+trap cleanup EXIT
+
+prepare_envfile() {
+  local src="$1"
+  local tmp
+
+  mapfile -t env_lines <"$src"
+
+  local pg_port="" host_port="" host_index=-1
+  local idx line
+  for idx in "${!env_lines[@]}"; do
+    line="${env_lines[$idx]}"
+    case "$line" in
+      PGPORT=*)
+        pg_port="${line#PGPORT=}"
+        ;;
+      PGHOST_PORT=*)
+        host_port="${line#PGHOST_PORT=}"
+        host_index=$idx
+        ;;
+    esac
+  done
+
+  if [[ -z "$pg_port" ]]; then
+    pg_port="5432"
+  fi
+  if [[ -z "$host_port" ]]; then
+    host_port="$pg_port"
+  fi
+
+  local changed=0
+  local new_lines=()
+  for line in "${env_lines[@]}"; do
+    case "$line" in
+      PGPORT=*)
+        if [[ "$line" != "PGPORT=5432" ]]; then
+          changed=1
+        fi
+        new_lines+=("PGPORT=5432")
+        ;;
+      PGHOST_PORT=*)
+        local new_line="PGHOST_PORT=${host_port}"
+        if [[ "$line" != "$new_line" ]]; then
+          changed=1
+        fi
+        new_lines+=("$new_line")
+        ;;
+      *)
+        new_lines+=("$line")
+        ;;
+    esac
+  done
+
+  if (( host_index < 0 )); then
+    changed=1
+    local insert_index=-1
+    for idx in "${!new_lines[@]}"; do
+      if [[ "${new_lines[$idx]}" == PGDATABASE=* ]]; then
+        insert_index=$((idx + 1))
+        break
+      fi
+    done
+    if (( insert_index >= 0 )); then
+      new_lines=("${new_lines[@]:0:$insert_index}" "PGHOST_PORT=${host_port}" "${new_lines[@]:$insert_index}")
+    else
+      new_lines+=("PGHOST_PORT=${host_port}")
+    fi
+  fi
+
+  if (( ! changed )); then
+    echo "$src"
+    return
+  fi
+
+  tmp="$(mktemp)"
+  cleanup_envfiles+=("$tmp")
+  {
+    for line in "${new_lines[@]}"; do
+      printf '%s\n' "$line"
+    done
+  } >"$tmp"
+
+  echo "$tmp"
+}
+
+envfile="$(prepare_envfile "$envfile")"
+if [[ "$envfile" != "$envfile_source" ]]; then
+  echo "ℹ️  Normalized lane env file ports for Supabase lane '$lane' (source: $envfile_source)" >&2
+fi
+
 export ENV_FILE="$envfile"
 # shellcheck disable=SC1090
 set -a; source "$envfile"; set +a
 compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
+
+pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
+export PGHOST_PORT="$pg_host_port"
+export PGPORT="${PGPORT:-5432}"
 
 local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
@@ -88,7 +191,7 @@ run_pg_isready_host() {
     return 127
   fi
 
-  local cmd=("$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user")
+  local cmd=("$pg_isready_bin" -h "$local_pg_host" -p "$pg_host_port" -d "$PGDATABASE" -U "$user")
   local output status
   set +e
   if [[ -n "$password" ]]; then
@@ -301,7 +404,7 @@ wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
 
-  echo "Waiting for Postgres for lane '$lane' on ${local_pg_host}:${PGPORT} (user: ${PGUSER})" >&2
+  echo "Waiting for Postgres for lane '$lane' on ${local_pg_host}:${pg_host_port} (user: ${PGUSER})" >&2
 
   if ! ensure_lane_role "$attempts" "$delay"; then
     return 2
@@ -315,7 +418,7 @@ diagnose_pg_failure() {
 
   {
     echo "❌ [$context] Unable to connect to Postgres for Supabase lane '$lane'."
-    echo "   Host: ${local_pg_host}  Port: ${PGPORT:-<unset>}  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
+    echo "   Host: ${local_pg_host}  Port: ${pg_host_port:-<unset>} (container: ${PGPORT:-<unset>})  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
     if [[ -n "$pg_probe_last_host_output" ]]; then
       echo "   Last host pg_isready exit code ${pg_probe_last_host_status:-?}:"
       printf '%s\n' "$pg_probe_last_host_output" | indent_lines '      '
@@ -323,8 +426,12 @@ diagnose_pg_failure() {
       echo "   Last pg_isready attempt (${pg_probe_last_origin:-unknown}) exit code ${pg_probe_last_status:-?}:"
       printf '%s\n' "$pg_probe_last_output" | indent_lines '      '
     fi
-    if [[ -n "$envfile" ]]; then
-      echo "   Env file: $envfile"
+    if [[ -n "$envfile_source" ]]; then
+      if [[ "$envfile" != "$envfile_source" ]]; then
+        echo "   Env file: $envfile_source (normalized copy: $envfile)"
+      else
+        echo "   Env file: $envfile"
+      fi
     fi
     if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
       echo "   Compose project: ${COMPOSE_PROJECT_NAME}"

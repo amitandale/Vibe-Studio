@@ -78,6 +78,14 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   fail "Missing required variables: ${missing[*]}" "Update $env_file with the required values."
 fi
 
+if [[ -z "${PGHOST_PORT:-}" ]]; then
+  echo "ℹ️  PGHOST_PORT not set; host tooling will fall back to PGPORT (${PGPORT})." >&2
+else
+  if [[ "${PGPORT}" != "5432" ]]; then
+    echo "⚠️  PGPORT is '${PGPORT}', but containers should listen on 5432. Provision the lane env again to normalize ports." >&2
+  fi
+fi
+
 weak_regex='(changeme|password|test|example|temp|secret)'
 if [[ "${PGPASSWORD,,}" =~ $weak_regex ]]; then
   echo "⚠️  PGPASSWORD appears weak (${PGPASSWORD}). Replace it with a strong unique password." >&2
