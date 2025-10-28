@@ -722,21 +722,24 @@ case "$cmd" in
           services_json=""
           jq_err_file="$(mktemp)"
           cleanup_envfiles+=("$jq_err_file")
-          if ! services_json=$(jq -ec '
-            if type=="array" then
-              .
-            elif type=="object" then
-              if has("Services") then
-                (.Services // [])
-              elif has("Service") then
-                [.] # docker compose v2.30+ may emit a single service object
+          if ! services_json=$(printf '%s\n' "$ps_json" | jq -nc '
+            def to_services:
+              if type=="array" then
+                .
+              elif type=="object" then
+                if has("Services") then
+                  (.Services // [])
+                elif has("Service") then
+                  [.] # docker compose v2.30+ may emit a single service object
+                else
+                  [.] # tolerate unknown object shapes but preserve data for diagnostics
+                end
               else
                 error("compose ps output is not an array of services")
-              end
-            else
-              error("compose ps output is not an array of services")
-            end
-          ' <<<"$ps_json" 2>"$jq_err_file"); then
+              end;
+
+            reduce inputs as $item ([]; . + ($item | to_services))
+          ' 2>"$jq_err_file"); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
             if [[ -s "$jq_err_file" ]]; then
               echo "  jq error:" >&2
@@ -757,7 +760,13 @@ case "$cmd" in
 
           missing_services=()
           for svc in db kong; do
-            if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
+            if ! jq -e --arg svc "$svc" '
+              any(.[];
+                ((.Service // .Name // "") == $svc) and
+                (((.State // "") | ascii_downcase | startswith("running")) or
+                 ((.State // "") | ascii_downcase | startswith("up")))
+              )
+            ' <<<"$services_json" >/dev/null; then
               missing_services+=("$svc")
             fi
           done
