@@ -43,6 +43,19 @@ if [[ "$super_role" == supabase_admin_${lane} ]]; then
 fi
 super_password="${SUPABASE_SUPER_PASSWORD:-}"
 
+pg_probe_last_origin=""
+pg_probe_last_status=1
+pg_probe_last_output=""
+pg_probe_last_host_status=""
+pg_probe_last_host_output=""
+
+indent_lines() {
+  local prefix="$1"
+  while IFS= read -r line; do
+    printf '%s%s\n' "$prefix" "$line"
+  done
+}
+
 warn_superuser_config() {
   cat >&2 <<MSG
 ⚠️  Unable to connect with the configured Supabase superuser credentials for lane '$lane'.
@@ -56,18 +69,43 @@ MSG
 run_pg_isready_host() {
   local user="$1"
   local password="$2"
+
   if [[ -z "$user" ]]; then
+    pg_probe_last_origin="host"
+    pg_probe_last_status=1
+    pg_probe_last_output="missing Postgres role name"
+    pg_probe_last_host_status=1
+    pg_probe_last_host_output="$pg_probe_last_output"
     return 1
   fi
-  if [[ -n "$pg_isready_bin" ]]; then
-    if [[ -n "$password" ]]; then
-      PGPASSWORD="$password" "$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
-    else
-      "$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
-    fi
-  else
+
+  if [[ -z "$pg_isready_bin" ]]; then
+    pg_probe_last_origin="host"
+    pg_probe_last_status=127
+    pg_probe_last_output="pg_isready not found on host PATH"
+    pg_probe_last_host_status=127
+    pg_probe_last_host_output="$pg_probe_last_output"
     return 127
   fi
+
+  local cmd=("$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user")
+  local output status
+  set +e
+  if [[ -n "$password" ]]; then
+    output=$(PGPASSWORD="$password" "${cmd[@]}" 2>&1)
+    status=$?
+  else
+    output=$("${cmd[@]}" 2>&1)
+    status=$?
+  fi
+  set -e
+  pg_probe_last_origin="host"
+  pg_probe_last_status=$status
+  pg_probe_last_output="$output"
+  pg_probe_last_host_status=$status
+  pg_probe_last_host_output="$output"
+  printf '%s' "$output"
+  return "$status"
 }
 
 run_pg_isready_inside() {
@@ -78,6 +116,9 @@ run_pg_isready_inside() {
   local port="${5:-5432}"
 
   if [[ -z "$user" ]]; then
+    pg_probe_last_origin="container"
+    pg_probe_last_status=1
+    pg_probe_last_output="missing Postgres role name"
     return 1
   fi
 
@@ -86,7 +127,16 @@ run_pg_isready_inside() {
     exec_cmd+=(env PGPASSWORD="$password")
   fi
   exec_cmd+=(pg_isready -h "$host" -p "$port" -d "$database" -U "$user")
-  "${exec_cmd[@]}"
+  local output status
+  set +e
+  output=$("${exec_cmd[@]}" 2>&1)
+  status=$?
+  set -e
+  pg_probe_last_origin="container"
+  pg_probe_last_status=$status
+  pg_probe_last_output="$output"
+  printf '%s' "$output"
+  return "$status"
 }
 
 run_pg_isready() {
@@ -131,6 +181,31 @@ wait_for_user() {
   done
 
   run_pg_isready "$user" "$password"
+}
+
+should_attempt_credential_repair() {
+  if [[ -z "$super_role" || -z "$super_password" ]]; then
+    return 1
+  fi
+
+  local status output lower
+  status="${pg_probe_last_host_status:-${pg_probe_last_status:-}}"
+  output="${pg_probe_last_host_output:-${pg_probe_last_output:-}}"
+
+  if [[ -z "$status" || "$status" -eq 0 || "$status" -eq 127 ]]; then
+    return 1
+  fi
+
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+
+  lower="${output,,}"
+  if [[ "$lower" == *"authentication"* || "$lower" == *"password"* || "$lower" == *"role"* ]]; then
+    return 0
+  fi
+
+  return 1
 }
 
 wait_for_superuser_inside() {
@@ -210,16 +285,23 @@ ensure_lane_role() {
     return 0
   fi
 
-  if ! repair_credentials "$attempts" "$delay"; then
+  if should_attempt_credential_repair; then
+    echo "Detected authentication failure for lane role '$PGUSER'; attempting credential repair." >&2
+    if ! repair_credentials "$attempts" "$delay"; then
+      return 2
+    fi
+
+    wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay"
+  else
     return 2
   fi
-
-  wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay"
 }
 
 wait_for_pg() {
   local attempts="${1:-30}"
   local delay="${2:-2}"
+
+  echo "Waiting for Postgres for lane '$lane' on ${local_pg_host}:${PGPORT} (user: ${PGUSER})" >&2
 
   if ! ensure_lane_role "$attempts" "$delay"; then
     return 2
@@ -227,6 +309,50 @@ wait_for_pg() {
 
   wait_for_user "$PGUSER" "$PGPASSWORD" "$attempts" "$delay"
 }
+
+diagnose_pg_failure() {
+  local context="$1"
+
+  {
+    echo "❌ [$context] Unable to connect to Postgres for Supabase lane '$lane'."
+    echo "   Host: ${local_pg_host}  Port: ${PGPORT:-<unset>}  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
+    if [[ -n "$pg_probe_last_host_output" ]]; then
+      echo "   Last host pg_isready exit code ${pg_probe_last_host_status:-?}:"
+      printf '%s\n' "$pg_probe_last_host_output" | indent_lines '      '
+    elif [[ -n "$pg_probe_last_output" ]]; then
+      echo "   Last pg_isready attempt (${pg_probe_last_origin:-unknown}) exit code ${pg_probe_last_status:-?}:"
+      printf '%s\n' "$pg_probe_last_output" | indent_lines '      '
+    fi
+    if [[ -n "$envfile" ]]; then
+      echo "   Env file: $envfile"
+    fi
+    if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+      echo "   Compose project: ${COMPOSE_PROJECT_NAME}"
+    fi
+  } >&2
+
+  ("${compose_cmd[@]}" ps >&2) || true
+
+  local port_info
+  port_info=$("${compose_cmd[@]}" port db 5432 2>/dev/null || true)
+  if [[ -n "$port_info" ]]; then
+    echo "   Published db port: $port_info" >&2
+  fi
+
+  local container_name
+  container_name="${COMPOSE_PROJECT_NAME:-supa-${lane}}-db-1"
+  if docker ps --format '{{.Names}}' --filter "name=${container_name}" | grep -q "${container_name}"; then
+    docker ps --filter "name=${container_name}" --format '   Container {{.Names}}: {{.Status}} (ports: {{.Ports}})' >&2 || true
+    docker inspect -f '   Network mode: {{.HostConfig.NetworkMode}}' "$container_name" >&2 || true
+    docker inspect -f '   Port bindings: {{json .NetworkSettings.Ports}}' "$container_name" >&2 || true
+    echo "---- recent db logs (${container_name}) ----" >&2
+    docker logs --tail 60 "$container_name" >&2 || true
+    echo "---- end db logs ----" >&2
+  else
+    echo "   Container ${container_name} not found for diagnostics." >&2
+  fi
+}
+
 case "$cmd" in
   start)
     "${compose_cmd[@]}" up -d --remove-orphans
@@ -239,9 +365,13 @@ case "$cmd" in
     ;;
   db-health)
     if ! wait_for_pg; then
+      diagnose_pg_failure "wait_for_pg"
       exit 2
     fi
-    run_pg_isready "$PGUSER" "$PGPASSWORD"
+    if ! run_pg_isready "$PGUSER" "$PGPASSWORD"; then
+      diagnose_pg_failure "db-health"
+      exit 2
+    fi
     ;;
   restart)
     "${compose_cmd[@]}" down
@@ -249,9 +379,13 @@ case "$cmd" in
     ;;
   health)
     if ! wait_for_pg; then
+      diagnose_pg_failure "wait_for_pg"
       exit 2
     fi
-    run_pg_isready "$PGUSER" "$PGPASSWORD"
+    if ! run_pg_isready "$PGUSER" "$PGPASSWORD"; then
+      diagnose_pg_failure "health"
+      exit 2
+    fi
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)
