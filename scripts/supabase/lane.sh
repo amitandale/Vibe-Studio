@@ -177,6 +177,7 @@ pg_probe_last_status=1
 pg_probe_last_output=""
 pg_probe_last_host_status=""
 pg_probe_last_host_output=""
+pg_probe_last_host_attempted=0
 
 indent_lines() {
   local prefix="$1"
@@ -371,12 +372,16 @@ check_pg_login() {
   local user="$1"
   local password="$2"
   local host_status=127
+  local host_failed=0
 
   if [[ -z "$user" ]]; then
     return 1
   fi
 
+  pg_probe_last_host_attempted=0
+
   if [[ -n "$psql_bin" ]]; then
+    pg_probe_last_host_attempted=1
     local status
     if run_psql_login_host "$user" "$password"; then
       return 0
@@ -384,23 +389,35 @@ check_pg_login() {
     status=$?
     host_status=$status
     if [[ $status -ne 127 ]]; then
-      return $status
+      host_failed=1
+    else
+      pg_probe_last_host_attempted=0
     fi
   fi
 
   if run_psql_login_inside "$user" "$password"; then
-    if [[ ${host_status:-} == 127 ]]; then
+    if (( pg_probe_last_host_attempted == 0 )); then
       pg_probe_last_host_status=0
       pg_probe_last_host_output="$pg_probe_last_output"
+      return 0
+    fi
+    if (( host_failed )); then
+      return "$host_status"
     fi
     return 0
   fi
 
   local inside_status=$?
-  if [[ ${host_status:-} == 127 ]]; then
+  if (( pg_probe_last_host_attempted == 0 )); then
     pg_probe_last_host_status=$inside_status
     pg_probe_last_host_output="$pg_probe_last_output"
+    return "$inside_status"
   fi
+
+  if (( host_failed )); then
+    return "$host_status"
+  fi
+
   return "$inside_status"
 }
 
@@ -439,9 +456,16 @@ should_attempt_credential_repair() {
     return 1
   fi
 
-  local status output lower
-  status="${pg_probe_last_host_status:-${pg_probe_last_status:-}}"
-  output="${pg_probe_last_host_output:-${pg_probe_last_output:-}}"
+  local status output lower host_attempted
+  host_attempted="${pg_probe_last_host_attempted:-0}"
+
+  if [[ "$host_attempted" -eq 1 ]]; then
+    status="${pg_probe_last_host_status:-}"
+    output="${pg_probe_last_host_output:-}"
+  else
+    status="${pg_probe_last_status:-}"
+    output="${pg_probe_last_output:-}"
+  fi
 
   if [[ -z "$status" || "$status" -eq 0 || "$status" -eq 127 ]]; then
     return 1
@@ -673,24 +697,34 @@ case "$cmd" in
       exit 1
     fi
     if command -v jq >/dev/null 2>&1; then
-      ps_json=$("${compose_cmd[@]}" ps --format json 2>/dev/null || true)
-      if [[ -n "$ps_json" ]]; then
-        if [[ ${ps_json:0:1} == "[" || ${ps_json:0:1} == "{" ]]; then
-          if jq -e . >/dev/null 2>&1 <<<"$ps_json"; then
-            missing=0
-            for svc in db kong; do
-              if ! jq -e --arg svc "$svc" 'any(.[]; .Service == $svc and ((.State // "") | ascii_downcase | startswith("running") or (.State // "") | ascii_downcase | startswith("up")))' <<<"$ps_json" >/dev/null; then
-                missing=1
-                break
-              fi
-            done
-            if [[ $missing -eq 0 ]]; then
-              exit 0
-            fi
-          else
-            echo "docker compose ps returned invalid JSON; aborting status check." >&2
-            exit 1
+      local ps_json
+      if ps_json=$("${compose_cmd[@]}" ps --format json 2>/dev/null); then
+        if [[ -z "$ps_json" ]]; then
+          echo "docker compose ps --format json produced no output; aborting status check." >&2
+          exit 1
+        fi
+
+        local services_json
+        if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then .Services else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
+          echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
+          exit 1
+        fi
+
+        local missing=0
+        for svc in db kong; do
+          if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
+            missing=1
+            break
           fi
+        done
+        if [[ $missing -eq 0 ]]; then
+          exit 0
+        fi
+      else
+        local ps_json_status=$?
+        if [[ $ps_json_status -eq 0 ]]; then
+          echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
+          exit 1
         fi
       fi
     fi
