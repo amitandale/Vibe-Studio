@@ -714,8 +714,24 @@ case "$cmd" in
           echo "ℹ️  docker compose ps --format json returned no data; falling back to text parsing." >&2
         elif [[ "$ps_json" =~ ^[[:space:]]*[\{\[] ]]; then
           services_json=""
-          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then (.Services // []) else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
+          jq_err_file="$(mktemp)"
+          cleanup_envfiles+=("$jq_err_file")
+          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then (.Services // []) else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>"$jq_err_file"); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
+            if [[ -s "$jq_err_file" ]]; then
+              echo "  jq error:" >&2
+              indent_lines "    " <"$jq_err_file" >&2
+            fi
+            if [[ -n "${ps_json//[[:space:]]/}" ]]; then
+              echo "  raw payload preview (first 400 chars):" >&2
+              payload_preview="$ps_json"
+              if (( ${#payload_preview} > 400 )); then
+                payload_preview="${payload_preview:0:400}…"
+              fi
+              printf '%s\n' "$payload_preview" | indent_lines "    " >&2
+            else
+              echo "  raw payload was empty" >&2
+            fi
             exit 1
           fi
 
