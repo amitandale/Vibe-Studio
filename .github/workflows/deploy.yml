@@ -81,7 +81,7 @@ jobs:
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         env:
           LANE: ${{ steps.lane.outputs.lane }}
-        run: scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
+        run: scripts/supabase/provision_lane_env.sh "$LANE"
 
       - name: Validate lane environment exists
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
@@ -122,10 +122,16 @@ jobs:
           else
             echo "volume_present=false" >> "$GITHUB_OUTPUT"
           fi
-          if scripts/supabase/lane.sh "$LANE" status; then
+          set +e
+          scripts/supabase/lane.sh "$LANE" status
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
             echo "running=true" >> "$GITHUB_OUTPUT"
           else
             echo "running=false" >> "$GITHUB_OUTPUT"
+            echo "🚨 Supabase lane status check failed for lane '$LANE'" >&2
+            exit "$status"
           fi
 
       - name: Stop lane services and bring DB up
