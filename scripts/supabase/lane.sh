@@ -714,7 +714,7 @@ case "$cmd" in
           echo "ℹ️  docker compose ps --format json returned no data; falling back to text parsing." >&2
         elif [[ "$ps_json" =~ ^[[:space:]]*[\{\[] ]]; then
           services_json=""
-          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then .Services else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
+          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then (.Services // []) else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
             exit 1
           fi
