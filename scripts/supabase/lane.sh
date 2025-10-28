@@ -157,9 +157,73 @@ export ENV_FILE="$envfile"
 set -a; source "$envfile"; set +a
 compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
 
+require_lane_env_vars() {
+  local missing=()
+  local var
+  for var in "$@"; do
+    if [[ -z "${!var:-}" ]]; then
+      missing+=("$var")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    {
+      echo "❌ Supabase lane '$lane' environment is missing required variables: ${missing[*]}"
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+      echo "   You can run scripts/supabase/validate_lane_env.sh $lane locally to verify the configuration."
+    } >&2
+    exit 1
+  fi
+}
+
+validate_port_var() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name must be a numeric TCP port (received '$value')."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+
+  if (( value < 1 || value > 65535 )); then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name is out of range (received '$value'; expected 1-65535)."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+}
+
+require_lane_env_vars \
+  COMPOSE_PROJECT_NAME \
+  LANE \
+  VOL_NS \
+  PGHOST \
+  PGPORT \
+  PGDATABASE \
+  PGUSER \
+  KONG_HTTP_PORT \
+  EDGE_PORT \
+  EDGE_ENV_FILE \
+  JWT_SECRET \
+  ANON_KEY \
+  SERVICE_ROLE_KEY
+
 pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
 export PGHOST_PORT="$pg_host_port"
 export PGPORT="${PGPORT:-5432}"
+
+validate_port_var PGHOST_PORT
+validate_port_var PGPORT
+validate_port_var KONG_HTTP_PORT
+validate_port_var EDGE_PORT
 
 local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
