@@ -716,7 +716,21 @@ case "$cmd" in
           services_json=""
           jq_err_file="$(mktemp)"
           cleanup_envfiles+=("$jq_err_file")
-          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then (.Services // []) else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>"$jq_err_file"); then
+          if ! services_json=$(jq -ec '
+            if type=="array" then
+              .
+            elif type=="object" then
+              if has("Services") then
+                (.Services // [])
+              elif has("Service") then
+                [.] # docker compose v2.30+ may emit a single service object
+              else
+                error("compose ps output is not an array of services")
+              end
+            else
+              error("compose ps output is not an array of services")
+            end
+          ' <<<"$ps_json" 2>"$jq_err_file"); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
             if [[ -s "$jq_err_file" ]]; then
               echo "  jq error:" >&2
