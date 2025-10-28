@@ -16,7 +16,7 @@ The GitHub Actions workflow invokes these scripts, so each dependency must be av
 
 ## Generate lane environment files
 
-Lane configuration files persist in the Supabase state directory (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`) and a working copy is written to `ops/supabase/lanes/<lane>.env`. Each file stores the lane-specific ports, credentials, and JWT secrets. Review `ops/supabase/lanes/credentials.env` to confirm the Postgres and `supabase_admin` passwords for each lane, then use the provisioning script to create the env files:
+Lane configuration files live in `ops/supabase/lanes/<lane>.env`, while passwords and superuser credentials are sourced exclusively from `ops/supabase/lanes/credentials.env`. Review that credentials file to confirm the Postgres and `supabase_admin` passwords for each lane, then use the provisioning script to create the env files:
 
 ```bash
 scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin
@@ -27,7 +27,7 @@ scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin
 - The provisioning helper reads lane credentials from `credentials.env` by default. Edit that file or pass explicit flags when you need different values on a new runner.
 - The script generates fresh `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` values using Python's `secrets` module.
 - Override the edge runtime environment file path with `--edge-env-file` if your runner uses a different location.
-- Supply `--pg-super-password` when the fallback maintenance account differs from the default `supabase_admin` or when you rotate the admin credential. You can also edit `credentials.env` (or `$SUPABASE_STATE_DIR/superusers.env`) directly before rerunning the script.
+- Supply `--pg-super-password` when the fallback maintenance account differs from the default `supabase_admin` or when you rotate the admin credential. You can also edit `credentials.env` directly before rerunning the script.
 - Use `--force` to replace an existing file (for example, when rotating credentials).
 
 The script marks each generated file with `chmod 600` to keep secrets protected on disk.
