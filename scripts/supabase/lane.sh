@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for bin in docker pg_isready curl; do
+for bin in docker curl; do
   if ! command -v "$bin" >/dev/null 2>&1; then
     echo "required command '$bin' not found in PATH" >&2
     exit 1
   fi
 done
+
+pg_isready_bin=""
+if command -v pg_isready >/dev/null 2>&1; then
+  pg_isready_bin="$(command -v pg_isready)"
+fi
 
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -48,17 +53,63 @@ warn_superuser_config() {
 MSG
 }
 
-run_pg_isready() {
+run_pg_isready_host() {
   local user="$1"
   local password="$2"
   if [[ -z "$user" ]]; then
     return 1
   fi
-  if [[ -n "$password" ]]; then
-    PGPASSWORD="$password" pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+  if [[ -n "$pg_isready_bin" ]]; then
+    if [[ -n "$password" ]]; then
+      PGPASSWORD="$password" "$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+    else
+      "$pg_isready_bin" -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+    fi
   else
-    pg_isready -h "$local_pg_host" -p "$PGPORT" -d "$PGDATABASE" -U "$user"
+    return 127
   fi
+}
+
+run_pg_isready_inside() {
+  local user="$1"
+  local password="$2"
+  local database="${3:-$PGDATABASE}"
+  local host="${4:-/var/run/postgresql}"
+  local port="${5:-5432}"
+
+  if [[ -z "$user" ]]; then
+    return 1
+  fi
+
+  local exec_cmd=("${compose_cmd[@]}" exec -T db)
+  if [[ -n "$password" ]]; then
+    exec_cmd+=(env PGPASSWORD="$password")
+  fi
+  exec_cmd+=(pg_isready -h "$host" -p "$port" -d "$database" -U "$user")
+  "${exec_cmd[@]}"
+}
+
+run_pg_isready() {
+  local user="$1"
+  local password="$2"
+
+  if [[ -z "$user" ]]; then
+    return 1
+  fi
+
+  if [[ -n "$pg_isready_bin" ]]; then
+    local status
+    if run_pg_isready_host "$user" "$password"; then
+      return 0
+    else
+      status=$?
+      if [[ $status -ne 127 ]]; then
+        return $status
+      fi
+    fi
+  fi
+
+  run_pg_isready_inside "$user" "$password"
 }
 
 wait_for_user() {
@@ -88,13 +139,13 @@ wait_for_superuser_inside() {
 
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if "${compose_cmd[@]}" exec -T db pg_isready -h /var/run/postgresql -p 5432 -d postgres -U supabase_admin >/dev/null 2>&1; then
+    if run_pg_isready_inside supabase_admin "" postgres >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"
   done
 
-  "${compose_cmd[@]}" exec -T db pg_isready -h /var/run/postgresql -p 5432 -d postgres -U supabase_admin >/dev/null 2>&1
+  run_pg_isready_inside supabase_admin "" postgres >/dev/null 2>&1
 }
 
 repair_credentials() {
