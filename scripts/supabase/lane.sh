@@ -372,10 +372,12 @@ $$;
 SQL
 )
 
-  if ! "${compose_cmd[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$sql"; then
+  if ! env PGPASSWORD="$super_password" "${compose_cmd[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$sql"; then
     warn_superuser_config
     return 2
   fi
+
+  echo "✅ Supabase credentials repaired for lane '$lane'" >&2
 
   return 0
 }
