@@ -426,6 +426,7 @@ wait_for_user() {
   local password="$2"
   local attempts="${3:-30}"
   local delay="${4:-2}"
+  local last_login_status=""
 
   if [[ -z "$user" ]]; then
     return 1
@@ -437,6 +438,7 @@ wait_for_user() {
       if check_pg_login "$user" "$password" >/dev/null 2>&1; then
         return 0
       fi
+      last_login_status=$?
     fi
     sleep "$delay"
   done
@@ -445,7 +447,12 @@ wait_for_user() {
     if check_pg_login "$user" "$password" >/dev/null 2>&1; then
       return 0
     fi
-    return $?
+    last_login_status=$?
+    return "$last_login_status"
+  fi
+
+  if [[ -n "$last_login_status" ]]; then
+    return "$last_login_status"
   fi
 
   return "${pg_probe_last_status:-1}"
@@ -697,20 +704,20 @@ case "$cmd" in
       exit 1
     fi
     if command -v jq >/dev/null 2>&1; then
-      local ps_json
+      ps_json=""
       if ps_json=$("${compose_cmd[@]}" ps --format json 2>/dev/null); then
         if [[ -z "$ps_json" ]]; then
           echo "docker compose ps --format json produced no output; aborting status check." >&2
           exit 1
         fi
 
-        local services_json
+        services_json=""
         if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then .Services else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>/dev/null); then
           echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
           exit 1
         fi
 
-        local missing=0
+        missing=0
         for svc in db kong; do
           if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
             missing=1
@@ -721,7 +728,7 @@ case "$cmd" in
           exit 0
         fi
       else
-        local ps_json_status=$?
+        ps_json_status=$?
         if [[ $ps_json_status -eq 0 ]]; then
           echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
           exit 1
