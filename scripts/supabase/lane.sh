@@ -716,43 +716,8 @@ case "$cmd" in
           services_json=""
           jq_err_file="$(mktemp)"
           cleanup_envfiles+=("$jq_err_file")
-          if ! services_json=$(jq -esc '
-            def collect($x):
-              if ($x|type) == "array" then
-                reduce $x[] as $elem ([]; . + collect($elem))
-              elif ($x|type) == "object" then
-                if $x|has("Services") then
-                  collect($x.Services // [])
-                elif ($x|has("Service") or $x|has("Name")) then
-                  [$x]
-                else
-                  []
-                end
-              else
-                []
-              end;
-            collect(.)
-          ' <<<"$ps_json" 2>"$jq_err_file"); then
+          if ! services_json=$(jq -ec 'if type=="array" then . elif type=="object" and has("Services") then (.Services // []) else error("compose ps output is not an array of services") end' <<<"$ps_json" 2>"$jq_err_file"); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
-            if [[ -s "$jq_err_file" ]]; then
-              echo "  jq error:" >&2
-              indent_lines "    " <"$jq_err_file" >&2
-            fi
-            if [[ -n "${ps_json//[[:space:]]/}" ]]; then
-              echo "  raw payload preview (first 400 chars):" >&2
-              payload_preview="$ps_json"
-              if (( ${#payload_preview} > 400 )); then
-                payload_preview="${payload_preview:0:400}…"
-              fi
-              printf '%s\n' "$payload_preview" | indent_lines "    " >&2
-            else
-              echo "  raw payload was empty" >&2
-            fi
-            exit 1
-          fi
-
-          if ! jq -e 'type=="array"' <<<"$services_json" >/dev/null 2>&1; then
-            echo "docker compose ps --format json produced an unsupported structure; aborting status check." >&2
             if [[ -s "$jq_err_file" ]]; then
               echo "  jq error:" >&2
               indent_lines "    " <"$jq_err_file" >&2
@@ -772,16 +737,7 @@ case "$cmd" in
 
           missing=0
           for svc in db kong; do
-            if ! jq -e --arg svc "$svc" '
-              any(.[];
-                ((.Service // .Name // "") | sub("^[^_]+_"; "") | sub("_[0-9]+$"; "")) == $svc and
-                (
-                  ((.State // .Status // "") | ascii_downcase | startswith("running")) or
-                  ((.State // .Status // "") | ascii_downcase | startswith("up")) or
-                  ((.Health // "") | ascii_downcase | startswith("healthy"))
-                )
-              )
-            ' <<<"$services_json" >/dev/null; then
+            if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
               missing=1
               break
             fi
