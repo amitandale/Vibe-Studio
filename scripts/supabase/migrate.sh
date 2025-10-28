@@ -37,8 +37,17 @@ if [[ -z "$pg_password" ]]; then
 fi
 export PGPASSWORD="$pg_password"
 
+pg_host="${PGHOST:-127.0.0.1}"
 pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
-PGURL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${pg_host_port}/${PGDATABASE}"
+psql_base=(
+  psql
+  -v
+  ON_ERROR_STOP=1
+  -h "$pg_host"
+  -p "$pg_host_port"
+  -U "$PGUSER"
+  -d "$PGDATABASE"
+)
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib
@@ -46,7 +55,7 @@ name = os.environ['PGDATABASE'].encode()
 print(zlib.adler32(b"supabase:migrations:" + name))
 PY
 )
-psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+"${psql_base[@]}" <<'SQL'
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS public;
 CREATE TABLE IF NOT EXISTS public.__migrations(
@@ -60,11 +69,11 @@ apply_tx() {
   local id
   id="$(basename "$file")"
   local have
-  have=$(psql "$PGURL" -tAc "select 1 from public.__migrations where id='${id}'" || true)
+  have=$("${psql_base[@]}" -tAc "select 1 from public.__migrations where id='${id}'" || true)
   if [[ "$have" == "1" ]]; then
     return 0
   fi
-  psql "$PGURL" -v ON_ERROR_STOP=1 <<SQL
+  "${psql_base[@]}" <<SQL
 BEGIN;
 SELECT pg_advisory_lock(${LOCK_KEY});
 \i '$file'
@@ -78,11 +87,11 @@ apply_nt() {
   local id
   id="$(basename "$file")"
   local have
-  have=$(psql "$PGURL" -tAc "select 1 from public.__migrations where id='${id}'" || true)
+  have=$("${psql_base[@]}" -tAc "select 1 from public.__migrations where id='${id}'" || true)
   if [[ "$have" == "1" ]]; then
     return 0
   fi
-  psql "$PGURL" -v ON_ERROR_STOP=1 <<SQL
+  "${psql_base[@]}" <<SQL
 SELECT pg_advisory_lock(${LOCK_KEY});
 \i '$file'
 INSERT INTO public.__migrations(id) VALUES ('${id}');
@@ -101,7 +110,7 @@ if (( ${#files[@]} )); then
     fi
   done
 fi
-psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+"${psql_base[@]}" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (

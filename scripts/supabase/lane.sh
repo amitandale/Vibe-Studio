@@ -675,15 +675,22 @@ case "$cmd" in
     if command -v jq >/dev/null 2>&1; then
       ps_json=$("${compose_cmd[@]}" ps --format json 2>/dev/null || true)
       if [[ -n "$ps_json" ]]; then
-        missing=0
-        for svc in db kong; do
-          if ! jq -e --arg svc "$svc" 'any(.[]; .Service == $svc and ((.State // "") | ascii_downcase | startswith("running") or (.State // "") | ascii_downcase | startswith("up")))' <<<"$ps_json" >/dev/null; then
-            missing=1
-            break
+        if [[ ${ps_json:0:1} == "[" || ${ps_json:0:1} == "{" ]]; then
+          if jq -e . >/dev/null 2>&1 <<<"$ps_json"; then
+            missing=0
+            for svc in db kong; do
+              if ! jq -e --arg svc "$svc" 'any(.[]; .Service == $svc and ((.State // "") | ascii_downcase | startswith("running") or (.State // "") | ascii_downcase | startswith("up")))' <<<"$ps_json" >/dev/null; then
+                missing=1
+                break
+              fi
+            done
+            if [[ $missing -eq 0 ]]; then
+              exit 0
+            fi
+          else
+            echo "docker compose ps returned invalid JSON; aborting status check." >&2
+            exit 1
           fi
-        done
-        if [[ $missing -eq 0 ]]; then
-          exit 0
         fi
       fi
     fi
