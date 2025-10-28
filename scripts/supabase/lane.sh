@@ -115,7 +115,7 @@ repair_credentials() {
   escaped_lane_password="$(printf "%s" "$PGPASSWORD" | sed "s/'/''/g")"
 
   local sql
-  sql=$(cat <<SQL
+  sql=$(cat <<'SQL'
 DO $$
 DECLARE
   v_super_role text := nullif('${escaped_super_role}', '');
