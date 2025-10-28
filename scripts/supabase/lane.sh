@@ -16,18 +16,20 @@ fi
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 compose="$root/ops/supabase/docker-compose.yml"
-state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
-state_envfile="$state_root/lanes/${lane}.env"
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
-if [[ -f "$state_envfile" ]]; then
-  envfile="$state_envfile"
-elif [[ -f "$repo_envfile" ]]; then
-  envfile="$repo_envfile"
-else
-  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --interactive --pg-super-role supabase_admin" >&2
+credentials_file="$root/ops/supabase/lanes/credentials.env"
+
+if [[ ! -f "$repo_envfile" ]]; then
+  echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
   exit 1
 fi
-envfile_source="$envfile"
+
+if [[ ! -f "$credentials_file" ]]; then
+  echo "credentials file $credentials_file missing; populate it with ${lane^^}_PG_PASSWORD before continuing." >&2
+  exit 1
+fi
+
+envfile_source="$repo_envfile"
 
 cleanup_envfiles=()
 cleanup() {
@@ -37,6 +39,35 @@ cleanup() {
   done
 }
 trap cleanup EXIT
+
+lane_upper="${lane^^}"
+# shellcheck disable=SC1090
+source "$credentials_file"
+
+credentials_pg_password_var="${lane_upper}_PG_PASSWORD"
+credentials_super_role_var="${lane_upper}_SUPER_ROLE"
+credentials_super_password_var="${lane_upper}_SUPER_PASSWORD"
+
+injected_pg_password="${!credentials_pg_password_var:-}"
+injected_super_role="${!credentials_super_role_var:-}" 
+injected_super_password="${!credentials_super_password_var:-}"
+
+if [[ -z "$injected_pg_password" ]]; then
+  echo "${credentials_pg_password_var} missing in $credentials_file; cannot continue." >&2
+  exit 1
+fi
+
+if [[ -z "$injected_super_role" ]]; then
+  injected_super_role="supabase_admin"
+fi
+if [[ "$injected_super_role" == supabase_admin_${lane} ]]; then
+  injected_super_role="supabase_admin"
+fi
+
+if [[ -z "$injected_super_password" ]]; then
+  echo "${credentials_super_password_var} missing in $credentials_file; cannot continue." >&2
+  exit 1
+fi
 
 prepare_envfile() {
   local src="$1"
@@ -66,22 +97,17 @@ prepare_envfile() {
     host_port="$pg_port"
   fi
 
-  local changed=0
   local new_lines=()
   for line in "${env_lines[@]}"; do
     case "$line" in
       PGPORT=*)
-        if [[ "$line" != "PGPORT=5432" ]]; then
-          changed=1
-        fi
         new_lines+=("PGPORT=5432")
         ;;
       PGHOST_PORT=*)
         local new_line="PGHOST_PORT=${host_port}"
-        if [[ "$line" != "$new_line" ]]; then
-          changed=1
-        fi
         new_lines+=("$new_line")
+        ;;
+      PGPASSWORD=*|SUPABASE_SUPER_PASSWORD=*|SUPABASE_SUPER_ROLE=*)
         ;;
       *)
         new_lines+=("$line")
@@ -90,7 +116,6 @@ prepare_envfile() {
   done
 
   if (( host_index < 0 )); then
-    changed=1
     local insert_index=-1
     for idx in "${!new_lines[@]}"; do
       if [[ "${new_lines[$idx]}" == PGDATABASE=* ]]; then
@@ -105,26 +130,22 @@ prepare_envfile() {
     fi
   fi
 
-  if (( ! changed )); then
-    echo "$src"
-    return
-  fi
-
   tmp="$(mktemp)"
   cleanup_envfiles+=("$tmp")
   {
     for line in "${new_lines[@]}"; do
       printf '%s\n' "$line"
     done
+    printf 'PGPASSWORD=%s\n' "$injected_pg_password"
+    printf 'SUPABASE_SUPER_ROLE=%s\n' "$injected_super_role"
+    printf 'SUPABASE_SUPER_PASSWORD=%s\n' "$injected_super_password"
   } >"$tmp"
 
   echo "$tmp"
 }
 
-envfile="$(prepare_envfile "$envfile")"
-if [[ "$envfile" != "$envfile_source" ]]; then
-  echo "ℹ️  Normalized lane env file ports for Supabase lane '$lane' (source: $envfile_source)" >&2
-fi
+envfile="$(prepare_envfile "$repo_envfile")"
+echo "ℹ️  Prepared ephemeral env file for Supabase lane '$lane' (source: $envfile_source, credentials: $credentials_file)" >&2
 
 export ENV_FILE="$envfile"
 # shellcheck disable=SC1090

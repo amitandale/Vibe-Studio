@@ -37,32 +37,31 @@ publishes for lane-specific connectivity.
 
 Volumes follow the pattern `supa-<lane>-db` and Compose project names default to `supa-<lane>`.
 
-## 🗄️ State Directory
+## 🔐 Credential Source of Truth
 
-Lane credentials persist outside of the git checkout so redeploys keep using the same secrets. By default the provisioning
-scripts store canonical env files and superuser credentials under `~/.config/vibe-studio/supabase`, but you can override the
-location with the `SUPABASE_STATE_DIR` environment variable. The deploy workflow sets this to `<deploy_dir>/../.supabase-state`
-so a shared state directory is reused across runs on the self-hosted runner.
+`ops/supabase/lanes/credentials.env` is the only canonical location for lane passwords. Every helper script reads the
+Postgres and superuser credentials directly from that file (or explicit CLI overrides) and injects them into temporary
+environment files at runtime. Nothing is written to `~/.config` or any other long-lived state directory, so rotating a
+password is as simple as editing `credentials.env` and rerunning the provisioning helper.
 
-The helper scripts still write a working copy to `ops/supabase/lanes/<lane>.env` for convenience, but the files inside the state
-directory remain the source of truth.
+The generated `ops/supabase/lanes/<lane>.env` files contain non-secret lane settings (ports, JWT keys, etc.). Secrets are
+overlaid dynamically from `credentials.env` whenever Compose or health checks run, ensuring there is a single source of
+truth for authentication data.
 
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
 2. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
-   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. The committed defaults are safe for the dev VPS; adjust them before first provisioning on a new runner.
-   - Populate the state directory from those committed credentials:
+   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
+   - Generate the per-lane env files (non-secret settings) straight from those committed credentials:
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin
      ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin
      ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin
      ```
-     The script maintains `superusers.env` and `<lane>.env` inside the state directory (default `~/.config/vibe-studio/supabase`).
-     It also copies fresh values to `ops/supabase/lanes/<lane>.env` so other tooling can read them from the checkout. Supabase service
-     versions are pinned directly inside `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer release.
-   - To rotate passwords, either edit `credentials.env` and rerun the helper with `--force`, or pass explicit `--pg-password/--pg-super-password` flags when invoking the script.
-   - Restored clusters that keep a legacy superuser should update `credentials.env` (or pass overrides) with that account so the deploy workflow can recreate the primary `PGUSER` when it is missing. You can pass the values on the command line or edit the state file (`$SUPABASE_STATE_DIR/superusers.env`) before rerunning the helper:
+     Supabase service versions are pinned directly inside `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer release.
+   - To rotate passwords, edit `credentials.env` (or pass explicit `--pg-password/--pg-super-password` flags) and rerun the helper. The next deploy automatically injects the updated credentials into the database and Compose runtime.
+   - Restored clusters that keep a legacy superuser should update `credentials.env` (or pass overrides) with that account so the deploy workflow can recreate the primary `PGUSER` when it is missing:
      ```bash
      ./scripts/supabase/provision_lane_env.sh codex \
        --pg-super-role supabase_admin \
@@ -109,19 +108,19 @@ stored roles using those credentials before migrations run, so the lane is heale
 
 ## 🔐 Security Best Practices
 
-- Never commit the generated `ops/supabase/lanes/*.env` files (they are gitignored) and keep the state directory (`$SUPABASE_STATE_DIR`) secured with `700/600` permissions.
+- Never commit the generated `ops/supabase/lanes/*.env` files (they are gitignored) and keep the repository checkout secured with `700/600` permissions on any file that stores secrets.
 - Generated secrets are placeholders—replace them with signed keys managed by your secret rotation tooling.
 - Keep file permissions strict (`600`) and restrict runner access.
 - Rotate `PGPASSWORD`, `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` regularly.
-- Store canonical secrets in your runner’s secret store (e.g., Ansible vault, 1Password CLI) and re-run the provisioning script with `--pg-password` when rotating. Back up `$SUPABASE_STATE_DIR/superusers.env` securely; it is the source of truth for the fallback superuser credentials used to repair recycled volumes.
+- Store canonical secrets in your runner’s secret store (e.g., Ansible vault, 1Password CLI) and re-run the provisioning script with `--pg-password` when rotating. `ops/supabase/lanes/credentials.env` is the sole source of truth for database credentials—keep it encrypted at rest and update it before redeploying.
 - Keep the Supabase admin password distinct from every lane password; the automation will not reset it for you.
 
 ## 🛠️ Troubleshooting
 
-- **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner. This will repopulate the state directory and refresh the working copy inside `ops/supabase/lanes/`.
-- **Weak password warning**: Re-run the provisioning script with a stronger password or edit the env file directly.
-- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/docker-compose.yml`. If an upstream tag disappears, update the compose file to a supported release and rerun the provisioning helper so passwords remain intact.
-- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper never modifies the Supabase admin password, so the stored secret must match the database before re-running the deploy.
+- **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner. This regenerates `ops/supabase/lanes/<lane>.env` from the checked-in credentials.
+- **Weak password warning**: Update the password in `ops/supabase/lanes/credentials.env`, rerun the provisioning script, and redeploy.
+- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/docker-compose.yml`. If an upstream tag disappears, update the compose file to a supported release and rerun the provisioning helper so configuration files stay in sync.
+- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper never modifies the Supabase admin password, so the stored secret must match the database before re-running the deploy.
 - **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

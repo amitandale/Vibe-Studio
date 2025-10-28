@@ -10,19 +10,33 @@ done
 
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
-state_envfile="$state_root/lanes/${lane}.env"
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
-if [[ -f "$state_envfile" ]]; then
-  envfile="$state_envfile"
-elif [[ -f "$repo_envfile" ]]; then
-  envfile="$repo_envfile"
-else
+credentials_file="$root/ops/supabase/lanes/credentials.env"
+
+if [[ ! -f "$repo_envfile" ]]; then
   echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
   exit 1
 fi
+
+if [[ ! -f "$credentials_file" ]]; then
+  echo "credentials file $credentials_file missing; populate it before running migrations." >&2
+  exit 1
+fi
+
 # shellcheck disable=SC1090
-set -a; source "$envfile"; set +a
+set -a; source "$repo_envfile"; set +a
+
+lane_upper="${lane^^}"
+# shellcheck disable=SC1090
+source "$credentials_file"
+pg_password_var="${lane_upper}_PG_PASSWORD"
+pg_password="${!pg_password_var:-}"
+if [[ -z "$pg_password" ]]; then
+  echo "${pg_password_var} missing in $credentials_file; cannot compute connection string." >&2
+  exit 1
+fi
+export PGPASSWORD="$pg_password"
+
 pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
 PGURL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${pg_host_port}/${PGDATABASE}"
 LOCK_KEY=$(python3 - <<'PY'
