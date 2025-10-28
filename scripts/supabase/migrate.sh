@@ -10,20 +10,44 @@ done
 
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-state_root="${SUPABASE_STATE_DIR:-$HOME/.config/vibe-studio/supabase}"
-state_envfile="$state_root/lanes/${lane}.env"
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
-if [[ -f "$state_envfile" ]]; then
-  envfile="$state_envfile"
-elif [[ -f "$repo_envfile" ]]; then
-  envfile="$repo_envfile"
-else
+credentials_file="$root/ops/supabase/lanes/credentials.env"
+
+if [[ ! -f "$repo_envfile" ]]; then
   echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
   exit 1
 fi
+
+if [[ ! -f "$credentials_file" ]]; then
+  echo "credentials file $credentials_file missing; populate it before running migrations." >&2
+  exit 1
+fi
+
 # shellcheck disable=SC1090
-set -a; source "$envfile"; set +a
-PGURL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+set -a; source "$repo_envfile"; set +a
+
+lane_upper="${lane^^}"
+# shellcheck disable=SC1090
+source "$credentials_file"
+pg_password_var="${lane_upper}_PG_PASSWORD"
+pg_password="${!pg_password_var:-}"
+if [[ -z "$pg_password" ]]; then
+  echo "${pg_password_var} missing in $credentials_file; cannot compute connection string." >&2
+  exit 1
+fi
+export PGPASSWORD="$pg_password"
+
+pg_host="${PGHOST:-127.0.0.1}"
+pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
+psql_base=(
+  psql
+  -v
+  ON_ERROR_STOP=1
+  -h "$pg_host"
+  -p "$pg_host_port"
+  -U "$PGUSER"
+  -d "$PGDATABASE"
+)
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib
@@ -31,7 +55,7 @@ name = os.environ['PGDATABASE'].encode()
 print(zlib.adler32(b"supabase:migrations:" + name))
 PY
 )
-psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+"${psql_base[@]}" <<'SQL'
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS public;
 CREATE TABLE IF NOT EXISTS public.__migrations(
@@ -45,11 +69,11 @@ apply_tx() {
   local id
   id="$(basename "$file")"
   local have
-  have=$(psql "$PGURL" -tAc "select 1 from public.__migrations where id='${id}'" || true)
+  have=$("${psql_base[@]}" -tAc "select 1 from public.__migrations where id='${id}'" || true)
   if [[ "$have" == "1" ]]; then
     return 0
   fi
-  psql "$PGURL" -v ON_ERROR_STOP=1 <<SQL
+  "${psql_base[@]}" <<SQL
 BEGIN;
 SELECT pg_advisory_lock(${LOCK_KEY});
 \i '$file'
@@ -63,11 +87,11 @@ apply_nt() {
   local id
   id="$(basename "$file")"
   local have
-  have=$(psql "$PGURL" -tAc "select 1 from public.__migrations where id='${id}'" || true)
+  have=$("${psql_base[@]}" -tAc "select 1 from public.__migrations where id='${id}'" || true)
   if [[ "$have" == "1" ]]; then
     return 0
   fi
-  psql "$PGURL" -v ON_ERROR_STOP=1 <<SQL
+  "${psql_base[@]}" <<SQL
 SELECT pg_advisory_lock(${LOCK_KEY});
 \i '$file'
 INSERT INTO public.__migrations(id) VALUES ('${id}');
@@ -86,7 +110,7 @@ if (( ${#files[@]} )); then
     fi
   done
 fi
-psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+"${psql_base[@]}" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (
