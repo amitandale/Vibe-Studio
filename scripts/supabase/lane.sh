@@ -704,7 +704,13 @@ case "$cmd" in
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)
-    if ! "${compose_cmd[@]}" ps >/dev/null 2>&1; then
+    if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
+      {
+        echo "❌ Supabase lane status check failed to query docker compose state for lane '$lane'."
+        echo "   Command: docker compose ps"
+        echo "   Output:"
+        printf '%s\n' "$ps_check_output" | indent_lines '     '
+      } >&2
       exit 1
     fi
     if command -v jq >/dev/null 2>&1; then
@@ -749,16 +755,31 @@ case "$cmd" in
             exit 1
           fi
 
-          missing=0
+          missing_services=()
           for svc in db kong; do
             if ! jq -e --arg svc "$svc" 'any(.[]; (.Service // "") == $svc and (((.State // "") | ascii_downcase | startswith("running")) or ((.State // "") | ascii_downcase | startswith("up"))))' <<<"$services_json" >/dev/null; then
-              missing=1
-              break
+              missing_services+=("$svc")
             fi
           done
-          if [[ $missing -eq 0 ]]; then
+          if (( ${#missing_services[@]} == 0 )); then
             exit 0
           fi
+
+          {
+            echo "❌ Supabase lane status check detected inactive services for lane '$lane'."
+            echo "   Missing services (json): ${missing_services[*]}"
+            echo "   docker compose ps --format json output snippet:"
+            if [[ -n "${ps_json//[[:space:]]/}" ]]; then
+              json_preview="$ps_json"
+              if (( ${#json_preview} > 400 )); then
+                json_preview="${json_preview:0:400}…"
+              fi
+              printf '%s\n' "$json_preview" | indent_lines '     '
+            else
+              echo "     <empty>"
+            fi
+          } >&2
+          exit 1
         else
           if [[ -n "${ps_json//[[:space:]]/}" ]]; then
             echo "ℹ️  docker compose ps --format json returned non-JSON output; falling back to text parsing." >&2
@@ -767,11 +788,31 @@ case "$cmd" in
       fi
     fi
     ps_output=$("${compose_cmd[@]}" ps 2>/dev/null || true)
+    missing_services=()
     for svc in db kong; do
       if ! grep -qiE "\b${svc}\b.*(up|running)" <<<"$ps_output"; then
-        exit 1
+        missing_services+=("$svc")
       fi
     done
+    if (( ${#missing_services[@]} == 0 )); then
+      exit 0
+    fi
+
+    {
+      echo "❌ Supabase lane status check detected inactive services for lane '$lane'."
+      echo "   Missing services (text): ${missing_services[*]}"
+      echo "   docker compose ps output:"
+      if [[ -n "${ps_output//[[:space:]]/}" ]]; then
+        text_preview="$ps_output"
+        if (( ${#text_preview} > 400 )); then
+          text_preview="${text_preview:0:400}…"
+        fi
+        printf '%s\n' "$text_preview" | indent_lines '     '
+      else
+        echo "     <empty>"
+      fi
+    } >&2
+    exit 1
     ;;
   *)
     echo "unknown command $cmd" >&2
