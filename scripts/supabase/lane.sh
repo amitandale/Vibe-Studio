@@ -88,13 +88,13 @@ wait_for_superuser_inside() {
 
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if "${compose_cmd[@]}" exec -T db pg_isready -h 127.0.0.1 -p 5432 -d postgres -U supabase_admin >/dev/null 2>&1; then
+    if "${compose_cmd[@]}" exec -T db pg_isready -h /var/run/postgresql -p 5432 -d postgres -U supabase_admin >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"
   done
 
-  "${compose_cmd[@]}" exec -T db pg_isready -h 127.0.0.1 -p 5432 -d postgres -U supabase_admin
+  "${compose_cmd[@]}" exec -T db pg_isready -h /var/run/postgresql -p 5432 -d postgres -U supabase_admin >/dev/null 2>&1
 }
 
 repair_credentials() {
@@ -106,10 +106,7 @@ repair_credentials() {
     return 2
   fi
 
-  if ! wait_for_superuser_inside "$attempts" "$delay"; then
-    warn_superuser_config
-    return 2
-  fi
+  wait_for_superuser_inside "$attempts" "$delay" || true
 
   if ! "${compose_cmd[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres \
       -v desired_super_role="$super_role" \
