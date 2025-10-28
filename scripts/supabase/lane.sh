@@ -364,6 +364,23 @@ repair_credentials() {
   escaped_lane_role="$(printf "%s" "$PGUSER" | sed "s/'/''/g")"
   escaped_lane_password="$(printf "%s" "$PGPASSWORD" | sed "s/'/''/g")"
 
+  repair_credentials_secret_status() {
+    local value="$1"
+    if [[ -z "$value" ]]; then
+      printf '<empty>'
+    else
+      printf 'length=%d' "${#value}"
+    fi
+  }
+
+  {
+    echo "Attempting Supabase credential repair for lane '$lane':"
+    echo "  super role...........: $super_role"
+    echo "  super password status: $(repair_credentials_secret_status "$super_password")"
+    echo "  lane role............: $PGUSER"
+    echo "  lane password status.: $(repair_credentials_secret_status "$PGPASSWORD")"
+  } >&2
+
   local sql
   sql=$(cat <<SQL
 DO $$
@@ -393,11 +410,17 @@ $$;
 SQL
 )
 
-  if ! env PGPASSWORD="$super_password" "${compose_cmd[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$sql"; then
+  local psql_output
+  if ! psql_output=$(env PGPASSWORD="$super_password" "${compose_cmd[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$sql" 2>&1); then
+    echo "❌ Supabase credential repair failed for lane '$lane'." >&2
+    echo "   Command: docker compose exec -T db psql -U supabase_admin -d postgres" >&2
+    echo "   Output:" >&2
+    printf '%s\n' "$psql_output" | indent_lines '     ' >&2
     warn_superuser_config
     return 2
   fi
 
+  printf '%s\n' "$psql_output" | indent_lines '   ' >&2
   echo "✅ Supabase credentials repaired for lane '$lane'" >&2
 
   return 0
