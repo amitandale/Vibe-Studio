@@ -1,8 +1,8 @@
 # Supabase Infrastructure Quick Reference
 
-Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, and `codex/*` branch classes. Lane state lives
-outside the git checkout inside the Supabase state directory so redeploys keep the same credentials even on fresh workflow
-runs.
+Vibe Studio runs three isolated Supabase lanes that mirror the `main`, `work`, and `codex/*` branch classes. Lane passwords are
+driven entirely by the checked-in `ops/supabase/lanes/credentials.env` file so redeploys keep the same credentials even on fresh
+workflow runs.
 
 ```
 ┌─────────┐    ┌─────────────────────────┐
@@ -28,9 +28,9 @@ runs.
 ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ```
 
-The script stores canonical credentials inside the Supabase state directory (default `~/.config/vibe-studio/supabase` or `$SUPABASE_STATE_DIR`) and writes a working copy to `ops/supabase/lanes/<lane>.env` with mode `600`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. The workflow always reads from the state directory first, so once a lane is provisioned the stored passwords remain authoritative across deploys and continue to mirror `credentials.env`.
+The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
 
-If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `$SUPABASE_STATE_DIR/superusers.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
+If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `credentials.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 
 ## 📘 Read Next
 
