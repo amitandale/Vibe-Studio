@@ -81,7 +81,7 @@ jobs:
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         env:
           LANE: ${{ steps.lane.outputs.lane }}
-        run: scripts/supabase/provision_lane_env.sh "$LANE" --random-pg-password
+        run: scripts/supabase/provision_lane_env.sh "$LANE"
 
       - name: Validate lane environment exists
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
