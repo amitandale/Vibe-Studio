@@ -13,6 +13,11 @@ if command -v pg_isready >/dev/null 2>&1; then
   pg_isready_bin="$(command -v pg_isready)"
 fi
 
+psql_bin=""
+if command -v psql >/dev/null 2>&1; then
+  psql_bin="$(command -v psql)"
+fi
+
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 compose="$root/ops/supabase/docker-compose.yml"
@@ -286,6 +291,119 @@ run_pg_isready() {
   run_pg_isready_inside "$user" "$password"
 }
 
+run_psql_login_host() {
+  local user="$1"
+  local password="$2"
+
+  if [[ -z "$user" ]]; then
+    pg_probe_last_origin="host-login"
+    pg_probe_last_status=1
+    pg_probe_last_output="missing Postgres role name"
+    pg_probe_last_host_status=1
+    pg_probe_last_host_output="$pg_probe_last_output"
+    return 1
+  fi
+
+  if [[ -z "$psql_bin" ]]; then
+    pg_probe_last_origin="host-login"
+    pg_probe_last_status=127
+    pg_probe_last_output="psql not found on host PATH"
+    pg_probe_last_host_status=127
+    pg_probe_last_host_output="$pg_probe_last_output"
+    return 127
+  fi
+
+  local cmd=("$psql_bin" -v ON_ERROR_STOP=1 -h "$local_pg_host" -p "$pg_host_port" -d "$PGDATABASE" -U "$user" -c "SELECT 1")
+  local output status
+  set +e
+  if [[ -n "$password" ]]; then
+    output=$(PGPASSWORD="$password" "${cmd[@]}" 2>&1)
+    status=$?
+  else
+    output=$("${cmd[@]}" 2>&1)
+    status=$?
+  fi
+  set -e
+
+  pg_probe_last_origin="host-login"
+  pg_probe_last_status=$status
+  pg_probe_last_output="$output"
+  pg_probe_last_host_status=$status
+  pg_probe_last_host_output="$output"
+  printf '%s' "$output"
+  return "$status"
+}
+
+run_psql_login_inside() {
+  local user="$1"
+  local password="$2"
+  local database="${3:-$PGDATABASE}"
+  local host="${4:-/var/run/postgresql}"
+  local port="${5:-5432}"
+
+  if [[ -z "$user" ]]; then
+    pg_probe_last_origin="container-login"
+    pg_probe_last_status=1
+    pg_probe_last_output="missing Postgres role name"
+    return 1
+  fi
+
+  local exec_cmd=("${compose_cmd[@]}" exec -T db)
+  if [[ -n "$password" ]]; then
+    exec_cmd+=(env PGPASSWORD="$password")
+  fi
+  exec_cmd+=(psql -v ON_ERROR_STOP=1 -h "$host" -p "$port" -d "$database" -U "$user" -c "SELECT 1")
+
+  local output status
+  set +e
+  output=$("${exec_cmd[@]}" 2>&1)
+  status=$?
+  set -e
+
+  pg_probe_last_origin="container-login"
+  pg_probe_last_status=$status
+  pg_probe_last_output="$output"
+  printf '%s' "$output"
+  return "$status"
+}
+
+check_pg_login() {
+  local user="$1"
+  local password="$2"
+  local host_status=127
+
+  if [[ -z "$user" ]]; then
+    return 1
+  fi
+
+  if [[ -n "$psql_bin" ]]; then
+    local status
+    if run_psql_login_host "$user" "$password"; then
+      return 0
+    fi
+    status=$?
+    host_status=$status
+    if [[ $status -ne 127 ]]; then
+      return $status
+    fi
+  fi
+
+  if run_psql_login_inside "$user" "$password"; then
+    if [[ ${host_status:-} == 127 ]]; then
+      pg_probe_last_host_status=0
+      pg_probe_last_host_output="$pg_probe_last_output"
+    fi
+    return 0
+  fi
+
+  local inside_status=$?
+  if [[ ${host_status:-} == 127 ]]; then
+    pg_probe_last_host_status=$inside_status
+    pg_probe_last_host_output="$pg_probe_last_output"
+  fi
+  return "$inside_status"
+}
+
 wait_for_user() {
   local user="$1"
   local password="$2"
@@ -299,12 +417,21 @@ wait_for_user() {
   local i
   for ((i = 1; i <= attempts; i++)); do
     if run_pg_isready "$user" "$password" >/dev/null 2>&1; then
-      return 0
+      if check_pg_login "$user" "$password" >/dev/null 2>&1; then
+        return 0
+      fi
     fi
     sleep "$delay"
   done
 
-  run_pg_isready "$user" "$password"
+  if run_pg_isready "$user" "$password" >/dev/null 2>&1; then
+    if check_pg_login "$user" "$password" >/dev/null 2>&1; then
+      return 0
+    fi
+    return $?
+  fi
+
+  return "${pg_probe_last_status:-1}"
 }
 
 should_attempt_credential_repair() {
@@ -521,7 +648,7 @@ case "$cmd" in
       diagnose_pg_failure "wait_for_pg"
       exit 2
     fi
-    if ! run_pg_isready "$PGUSER" "$PGPASSWORD"; then
+    if ! check_pg_login "$PGUSER" "$PGPASSWORD"; then
       diagnose_pg_failure "db-health"
       exit 2
     fi
@@ -535,7 +662,7 @@ case "$cmd" in
       diagnose_pg_failure "wait_for_pg"
       exit 2
     fi
-    if ! run_pg_isready "$PGUSER" "$PGPASSWORD"; then
+    if ! check_pg_login "$PGUSER" "$PGPASSWORD"; then
       diagnose_pg_failure "health"
       exit 2
     fi
