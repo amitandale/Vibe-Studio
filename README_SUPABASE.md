@@ -20,7 +20,9 @@ workflow runs.
 2. Change into the deploy checkout (see workflow output for `deploy_dir`).
 3. Review `ops/supabase/lanes/credentials.env` and adjust the lane Postgres and `supabase_admin` passwords if needed. These
    values are committed for the dev VPS so CI/CD can reuse them automatically.
-4. Generate the lane env files (they will pick up the credentials from `credentials.env`):
+4. Generate the lane env files (they will pick up the credentials from `credentials.env`).
+   Copy `ops/supabase/lanes/lane.env.example` to `ops/supabase/lanes/<lane>.env` for each lane first, then replace the placeholder
+   values with the real configuration before running the provisioning helper:
 
 ```bash
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
@@ -29,6 +31,16 @@ workflow runs.
 ```
 
 The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
+
+After editing a lane env file, run the validation helper to ensure all required variables—including Kong and Postgres port
+assignments—are present and non-empty:
+
+```bash
+./scripts/supabase/validate_lane_env.sh <lane>
+```
+
+The deploy workflow invokes the same validation before running `docker compose`, so catching the failures locally helps keep CI
+green.
 
 If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `credentials.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 

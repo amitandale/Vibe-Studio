@@ -201,14 +201,33 @@ validate_port_var() {
   fi
 }
 
+validate_slug_var() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$value" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name must contain lowercase letters, numbers, or dashes (received '$value')."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+}
+
 require_lane_env_vars \
   COMPOSE_PROJECT_NAME \
   LANE \
   VOL_NS \
+  ENV_FILE \
   PGHOST \
   PGPORT \
   PGDATABASE \
   PGUSER \
+  PGPASSWORD \
   KONG_HTTP_PORT \
   EDGE_PORT \
   EDGE_ENV_FILE \
@@ -224,6 +243,8 @@ validate_port_var PGHOST_PORT
 validate_port_var PGPORT
 validate_port_var KONG_HTTP_PORT
 validate_port_var EDGE_PORT
+
+validate_slug_var VOL_NS
 
 local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
@@ -732,6 +753,71 @@ diagnose_pg_failure() {
   fi
 }
 
+status_env_snapshot() {
+  {
+    echo "   Lane: ${lane}"
+    if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+      echo "   Compose project: ${COMPOSE_PROJECT_NAME}"
+    fi
+    if [[ -n "$envfile_source" ]]; then
+      if [[ "$envfile" != "$envfile_source" ]]; then
+        echo "   Env file: $envfile_source (normalized copy: $envfile)"
+      else
+        echo "   Env file: $envfile"
+      fi
+    fi
+    echo "   Postgres host: ${PGHOST:-<unset>}  container port: ${PGPORT:-<unset>}  published port: ${PGHOST_PORT:-<unset>}"
+    echo "   Kong HTTP port: ${KONG_HTTP_PORT:-<unset>}"
+    echo "   Edge runtime port: ${EDGE_PORT:-<unset>}"
+    echo "   Edge env file: ${EDGE_ENV_FILE:-<unset>}"
+  } >&2
+}
+
+service_expected_port() {
+  case "$1" in
+    db)
+      echo "5432"
+      ;;
+    kong)
+      echo "8000"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_service_diagnostics() {
+  local svc="$1"
+  local container="${2:-}"
+
+  {
+    echo "---- ${svc} diagnostics ----"
+  } >&2
+
+  ("${compose_cmd[@]}" ps "$svc" >&2) || true
+
+  local expected_port
+  if expected_port=$(service_expected_port "$svc" 2>/dev/null); then
+    local port_output
+    port_output=$("${compose_cmd[@]}" port "$svc" "$expected_port" 2>/dev/null || true)
+    if [[ -n "$port_output" ]]; then
+      echo "   Published ${svc} port ${expected_port}: $port_output" >&2
+    fi
+  fi
+
+  if [[ -n "$container" ]]; then
+    docker inspect -f '   Container {{.Name}} status: {{.State.Status}} (health: {{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}})' "$container" >&2 || true
+    docker inspect -f '   Restart count: {{.RestartCount}}  StartedAt: {{.State.StartedAt}}' "$container" >&2 || true
+  else
+    echo "   Container for service '$svc' not found via docker compose ps." >&2
+  fi
+
+  echo "---- recent ${svc} logs ----" >&2
+  ("${compose_cmd[@]}" logs --tail 80 "$svc" >&2) || true
+  echo "---- end ${svc} logs ----" >&2
+}
+
 case "$cmd" in
   start)
     "${compose_cmd[@]}" up -d --remove-orphans
@@ -822,25 +908,78 @@ case "$cmd" in
             exit 1
           fi
 
-          missing_services=()
-          for svc in db kong; do
-            if ! jq -e --arg svc "$svc" '
-              any(.[];
-                ((.Service // .Name // "") == $svc) and
-                (((.State // "") | ascii_downcase | startswith("running")) or
-                 ((.State // "") | ascii_downcase | startswith("up")))
-              )
-            ' <<<"$services_json" >/dev/null; then
+          declare -a required_services=(db kong)
+          declare -a missing_services=()
+          declare -a inactive_services=()
+          declare -A service_state_map=()
+          declare -A service_names=()
+          declare -A service_health_map=()
+
+          for svc in "${required_services[@]}"; do
+            svc_json=$(jq -c --arg svc "$svc" '
+              first(.[] | select((.Service // .Name // "") == $svc)) // empty
+            ' <<<"$services_json")
+
+            if [[ -z "${svc_json:-}" ]]; then
               missing_services+=("$svc")
+              continue
+            fi
+
+            service_names[$svc]="$(jq -r 'if (.Name // "") != "" then .Name else (.ID // "") end' <<<"$svc_json")"
+
+            state=$(jq -r '
+              if has("State") then
+                if (.State | type == "string") then .State else (.State.Status // "") end
+              elif has("Status") then
+                .Status
+              else
+                ""
+              end
+            ' <<<"$svc_json")
+            state_lc=$(printf '%s' "${state}" | tr '[:upper:]' '[:lower:]')
+            service_state_map[$svc]="$state_lc"
+            if [[ -z "$state_lc" || ! "$state_lc" =~ ^(running|up) ]]; then
+              inactive_services+=("$svc")
+            fi
+
+            health=$(jq -r '
+              if has("Health") then
+                if (.Health | type == "string") then .Health else (.Health.Status // "") end
+              elif (has("State") and (.State | type == "object") and (.State.Health? != null)) then
+                (.State.Health.Status // "")
+              else
+                ""
+              end
+            ' <<<"$svc_json")
+            health_lc=$(printf '%s' "${health}" | tr '[:upper:]' '[:lower:]')
+            if [[ -n "$health_lc" && "$health_lc" != healthy ]]; then
+              service_health_map[$svc]="$health_lc"
             fi
           done
-          if (( ${#missing_services[@]} == 0 )); then
+
+          if (( ${#missing_services[@]} == 0 && ${#inactive_services[@]} == 0 && ${#service_health_map[@]} == 0 )); then
             exit 0
           fi
 
           {
             echo "❌ Supabase lane status check detected inactive services for lane '$lane'."
-            echo "   Missing services (json): ${missing_services[*]}"
+            if (( ${#missing_services[@]} > 0 )); then
+              echo "   Missing services (json): ${missing_services[*]}"
+            fi
+            if (( ${#inactive_services[@]} > 0 )); then
+              printf '   Inactive services (json):'
+              for svc in "${inactive_services[@]}"; do
+                printf ' %s(state=%s)' "$svc" "${service_state_map[$svc]:-unknown}"
+              done
+              printf '\n'
+            fi
+            if (( ${#service_health_map[@]} > 0 )); then
+              printf '   Unhealthy services (json):'
+              for svc in "${!service_health_map[@]}"; do
+                printf ' %s(health=%s)' "$svc" "${service_health_map[$svc]}"
+              done
+              printf '\n'
+            fi
             echo "   docker compose ps --format json output snippet:"
             if [[ -n "${ps_json//[[:space:]]/}" ]]; then
               json_preview="$ps_json"
@@ -851,7 +990,23 @@ case "$cmd" in
             else
               echo "     <empty>"
             fi
+            status_env_snapshot
           } >&2
+
+          declare -A diag_targets=()
+          for svc in "${missing_services[@]}"; do diag_targets[$svc]=1; done
+          for svc in "${inactive_services[@]}"; do diag_targets[$svc]=1; done
+          for svc in "${!service_health_map[@]}"; do diag_targets[$svc]=1; done
+          if (( ${#diag_targets[@]} == 0 )); then
+            for svc in "${required_services[@]}"; do
+              diag_targets[$svc]=1
+            done
+          fi
+
+          for svc in "${!diag_targets[@]}"; do
+            print_service_diagnostics "$svc" "${service_names[$svc]:-}"
+          done
+
           exit 1
         else
           if [[ -n "${ps_json//[[:space:]]/}" ]]; then
@@ -884,7 +1039,26 @@ case "$cmd" in
       else
         echo "     <empty>"
       fi
+      status_env_snapshot
     } >&2
+
+    declare -A diag_targets=()
+    for svc in "${missing_services[@]}"; do
+      diag_targets[$svc]=1
+    done
+    if (( ${#diag_targets[@]} == 0 )); then
+      diag_targets[db]=1
+      diag_targets[kong]=1
+    fi
+
+    for svc in "${!diag_targets[@]}"; do
+      container_name="$("${compose_cmd[@]}" ps --format '{{.Name}}' "$svc" 2>/dev/null | head -n1)"
+      if [[ -z "$container_name" ]]; then
+        container_name="$("${compose_cmd[@]}" ps --format '{{.Service}} {{.Name}}' 2>/dev/null | awk -v svc="$svc" '$1==svc {print $2; exit}')"
+      fi
+      print_service_diagnostics "$svc" "${container_name:-}"
+    done
+
     exit 1
     ;;
   *)
