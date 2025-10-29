@@ -126,27 +126,17 @@ update_credentials_file() {
 }
 
 working_env_file="$lanes_dir/${lane}.env"
-declare -A existing_env=()
 if [[ -f "$working_env_file" ]]; then
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    if [[ "$line" == *"="* ]]; then
-      key="${line%%=*}"
-      value="${line#*=}"
-      existing_env["$key"]="$value"
-    fi
-  done <"$working_env_file"
   if [[ "$force" != true ]]; then
     echo "Updating existing $working_env_file" >&2
   fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$working_env_file"
+  set +a
 fi
 
-existing_edge_env_file="${existing_env[EDGE_ENV_FILE]:-}"
-existing_jwt_secret="${existing_env[JWT_SECRET]:-}"
-existing_anon_key="${existing_env[ANON_KEY]:-}"
-existing_service_key="${existing_env[SERVICE_ROLE_KEY]:-}"
-existing_super_role="${existing_env[SUPABASE_SUPER_ROLE]:-}"
+existing_edge_env_file="${EDGE_ENV_FILE:-}"
 
 case "$lane" in
   main)
@@ -234,34 +224,40 @@ random_base64() {
   openssl rand -base64 "$bytes" | tr -d '\n'
 }
 
+escape_env_value() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"
+  value="${value//\`/\\\`}" # backticks
+  printf '"%s"' "$value"
+}
+
 ensure_existing_or_default() {
   local key="$1" default_value="$2"
-  local value="${existing_env[$key]:-}"
-  if [[ -z "$value" ]]; then
-    value="$default_value"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$default_value"
   fi
-  existing_env["$key"]="$value"
-  printf '%s' "$value"
+  printf '%s' "$current"
 }
 
 ensure_random_hex() {
   local key="$1" bytes="$2"
-  local value="${existing_env[$key]:-}"
-  if [[ -z "$value" ]]; then
-    value="$(random_hex "$bytes")"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$(random_hex "$bytes")"
   fi
-  existing_env["$key"]="$value"
-  printf '%s' "$value"
+  printf '%s' "$current"
 }
 
 ensure_random_base64() {
   local key="$1" bytes="$2"
-  local value="${existing_env[$key]:-}"
-  if [[ -z "$value" ]]; then
-    value="$(random_base64 "$bytes")"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$(random_base64 "$bytes")"
   fi
-  existing_env["$key"]="$value"
-  printf '%s' "$value"
+  printf '%s' "$current"
 }
 
 declare -A new_env=()
@@ -291,10 +287,9 @@ secret_key_base="$(ensure_random_hex SECRET_KEY_BASE 64)"
 logflare_public="$(ensure_existing_or_default LOGFLARE_PUBLIC_ACCESS_TOKEN "logflare-public-${lane}")"
 logflare_private="$(ensure_existing_or_default LOGFLARE_PRIVATE_ACCESS_TOKEN "logflare-private-${lane}")"
 dashboard_user="$(ensure_existing_or_default DASHBOARD_USERNAME "admin@${lane}.supabase.local")"
-dashboard_password="${existing_env[DASHBOARD_PASSWORD]:-}"
+dashboard_password="${new_env[DASHBOARD_PASSWORD]:-${DASHBOARD_PASSWORD:-}}"
 if [[ -z "$dashboard_password" ]]; then
   dashboard_password="$(random_base64 24)"
-  existing_env[DASHBOARD_PASSWORD]="$dashboard_password"
 fi
 
 set_env "COMPOSE_PROJECT_NAME" "supa-${lane}"
@@ -409,7 +404,7 @@ fi
 
 {
   for key in "${env_order[@]}"; do
-    printf '%s=%s\n' "$key" "${new_env[$key]}"
+    printf '%s=%s\n' "$key" "$(escape_env_value "${new_env[$key]}")"
   done
 } >"$working_env_file"
 
