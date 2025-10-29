@@ -328,6 +328,9 @@ source_lane_env() {
   fi
 }
 source_lane_env "$envfile"
+# The deploy workflow runs `docker compose pull` using the same compose directory and
+# lane env file immediately before invoking this helper, so all commands below assume
+# Supabase images are already refreshed to match the upstream compose definition.
 compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$envfile" -f "$compose")
 
 run_compose_checked() {

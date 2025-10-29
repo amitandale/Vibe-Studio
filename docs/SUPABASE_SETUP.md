@@ -64,6 +64,7 @@ truth for authentication data.
    rm -rf "$tmpdir"
    ```
    The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the Supabase repository.
+   During deploys the workflow automatically refreshes the referenced images with `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` before services start, so keeping this directory up to date is enough to track upstream releases.
 3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
    - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:

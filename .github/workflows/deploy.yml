@@ -144,6 +144,36 @@ jobs:
             exit 1
           fi
 
+      - name: Refresh Supabase images
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          set -euo pipefail
+
+          envfile="ops/supabase/lanes/${LANE}.env"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+
+          echo "ℹ️  Refreshing Supabase images"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose directory: $(realpath "$compose_dir")"
+          echo "   Compose file: $(realpath "$compose_file")"
+
+          docker compose \
+            --project-directory "$compose_dir" \
+            --env-file "$envfile" \
+            -f "$compose_file" \
+            pull
+
+          echo "ℹ️  Supabase images after pull"
+          docker compose \
+            --project-directory "$compose_dir" \
+            --env-file "$envfile" \
+            -f "$compose_file" \
+            images
+
       - name: Capture Supabase lane state
         id: supabase_state
         working-directory: ${{ steps.vars.outputs.deploy_dir }}

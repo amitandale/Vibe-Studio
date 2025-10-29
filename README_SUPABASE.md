@@ -53,6 +53,8 @@ assignments—are present and non-empty:
 The deploy workflow invokes the same validation before running `docker compose`, and it refuses to proceed unless the downloaded
 Supabase compose assets are present. Catching failures locally helps keep CI green.
 
+As part of each deploy the workflow also executes `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` so the runner always uses images that match the upstream compose definition before starting services.
+
 If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `credentials.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 
 ## 📘 Read Next
