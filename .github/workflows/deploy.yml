@@ -101,6 +101,18 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          envfile="${{ steps.vars.outputs.deploy_dir }}/ops/supabase/lanes/${LANE}.env"
+          if [ ! -s "$envfile" ]; then
+            echo "❌ Lane env file missing or empty: $envfile"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --interactive --pg-super-role supabase_admin"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
           if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
             echo ""
             echo "🚨 Lane environment not configured!"

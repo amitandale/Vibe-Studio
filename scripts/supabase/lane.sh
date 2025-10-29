@@ -42,6 +42,11 @@ if [[ ! -f "$repo_envfile" ]]; then
   exit 1
 fi
 
+if [[ ! -s "$repo_envfile" ]]; then
+  echo "lane env file $repo_envfile is empty; regenerate it with scripts/supabase/provision_lane_env.sh $lane" >&2
+  exit 1
+fi
+
 if [[ ! -f "$credentials_file" ]]; then
   echo "credentials file $credentials_file missing; populate it with ${lane^^}_PG_PASSWORD before continuing." >&2
   exit 1
@@ -131,6 +136,7 @@ add_or_update_kv() {
 
 prepare_envfile() {
   local src="$1"
+  local dest="$src"
   local tmp
 
   declare -A env_map=()
@@ -231,18 +237,25 @@ prepare_envfile() {
   add_or_update_kv env_map key_order POSTGRES_PORT "5432"
 
   tmp="$(mktemp)"
-  cleanup_envfiles+=("$tmp")
   {
     for key in "${key_order[@]}"; do
       printf '%s=%s\n' "$key" "${env_map[$key]}"
     done
   } >"$tmp"
 
-  echo "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$dest"
+
+  echo "$dest"
 }
 
 envfile="$(prepare_envfile "$repo_envfile")"
-echo "ℹ️  Prepared ephemeral env file for Supabase lane '$lane' (source: $envfile_source, credentials: $credentials_file)" >&2
+if [[ ! -s "$envfile" ]]; then
+  echo "❌ Supabase lane env file '$envfile' is empty after preparation; regenerate it with scripts/supabase/provision_lane_env.sh $lane" >&2
+  exit 1
+fi
+
+echo "ℹ️  Prepared Supabase lane env file '$envfile' (source: $envfile_source, credentials: $credentials_file)" >&2
 echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
 echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
 

@@ -35,6 +35,10 @@ if [[ ! -f "$env_file" ]]; then
   fail "Lane environment file $env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane on the runner."
 fi
 
+if [[ ! -s "$env_file" ]]; then
+  fail "Lane environment file $env_file is empty." "Regenerate it with scripts/supabase/provision_lane_env.sh $lane."
+fi
+
 if grep -q '{{' "$env_file"; then
   fail "Lane environment file still contains template placeholders." "Replace all {{PLACEHOLDER}} entries with real values."
 fi
