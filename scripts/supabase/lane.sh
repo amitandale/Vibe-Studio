@@ -22,12 +22,15 @@ lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 default_compose="$root/ops/supabase/docker-compose.yml"
 official_compose="$root/ops/supabase/lanes/latest-docker-compose.yml"
+official_env_template="$root/ops/supabase/lanes/latest-docker.env"
 compose="$default_compose"
 compose_source="bundled"
 
-if [[ -f "$official_compose" ]]; then
+if [[ -f "$official_compose" && -f "$official_env_template" ]]; then
   compose="$official_compose"
   compose_source="official"
+elif [[ -f "$official_compose" && ! -f "$official_env_template" ]]; then
+  echo "⚠️  Supabase official compose file present but $official_env_template missing; falling back to bundled compose." >&2
 fi
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
@@ -82,25 +85,70 @@ if [[ -z "$injected_super_password" ]]; then
   exit 1
 fi
 
+add_or_update_kv() {
+  local map_ref="$1"
+  local order_ref="$2"
+  local key="$3"
+  local value="$4"
+
+  local -n map="$map_ref"
+  local -n order="$order_ref"
+
+  if [[ -v map[$key] ]]; then
+    map["$key"]="$value"
+  else
+    map["$key"]="$value"
+    order+=("$key")
+  fi
+}
+
 prepare_envfile() {
   local src="$1"
   local tmp
 
+  declare -A env_map=()
+  declare -a key_order=()
+
+  if [[ -f "$official_env_template" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+      if [[ "$line" == *"="* ]]; then
+        local key="${line%%=*}"
+        local value="${line#*=}"
+        add_or_update_kv env_map key_order "$key" "$value"
+      fi
+    done <"$official_env_template"
+  fi
+
   mapfile -t env_lines <"$src"
 
-  local pg_port="" host_port="" host_index=-1
-  local idx line
-  for idx in "${!env_lines[@]}"; do
-    line="${env_lines[$idx]}"
-    case "$line" in
-      PGPORT=*)
-        pg_port="${line#PGPORT=}"
-        ;;
-      PGHOST_PORT=*)
-        host_port="${line#PGHOST_PORT=}"
-        host_index=$idx
+  local pg_port="${env_map[PGPORT]:-}"
+  local host_port="${env_map[PGHOST_PORT]:-}"
+
+  local line key value
+  for line in "${env_lines[@]}"; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == "" ]] && continue
+    if [[ "$line" != *"="* ]]; then
+      continue
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      PGPORT)
+        pg_port="$value"
+        ;; 
+      PGHOST_PORT)
+        host_port="$value"
         ;;
     esac
+    case "$key" in
+      PGPASSWORD|SUPABASE_SUPER_PASSWORD|SUPABASE_SUPER_ROLE)
+        continue
+        ;;
+    esac
+    add_or_update_kv env_map key_order "$key" "$value"
   done
 
   if [[ -z "$pg_port" ]]; then
@@ -110,48 +158,29 @@ prepare_envfile() {
     host_port="$pg_port"
   fi
 
-  local new_lines=()
-  for line in "${env_lines[@]}"; do
-    case "$line" in
-      PGPORT=*)
-        new_lines+=("PGPORT=5432")
-        ;;
-      PGHOST_PORT=*)
-        local new_line="PGHOST_PORT=${host_port}"
-        new_lines+=("$new_line")
-        ;;
-      PGPASSWORD=*|SUPABASE_SUPER_PASSWORD=*|SUPABASE_SUPER_ROLE=*)
-        ;;
-      *)
-        new_lines+=("$line")
-        ;;
-    esac
-  done
+  add_or_update_kv env_map key_order PGPORT "5432"
+  add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  if (( host_index < 0 )); then
-    local insert_index=-1
-    for idx in "${!new_lines[@]}"; do
-      if [[ "${new_lines[$idx]}" == PGDATABASE=* ]]; then
-        insert_index=$((idx + 1))
-        break
-      fi
-    done
-    if (( insert_index >= 0 )); then
-      new_lines=("${new_lines[@]:0:$insert_index}" "PGHOST_PORT=${host_port}" "${new_lines[@]:$insert_index}")
-    else
-      new_lines+=("PGHOST_PORT=${host_port}")
-    fi
+  add_or_update_kv env_map key_order PGPASSWORD "$injected_pg_password"
+  add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "$injected_super_role"
+  add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
+
+  if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
+    add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"
   fi
+  if [[ -n "${env_map[PGUSER]:-}" ]]; then
+    add_or_update_kv env_map key_order POSTGRES_USER "${env_map[PGUSER]}"
+  fi
+  add_or_update_kv env_map key_order POSTGRES_PASSWORD "$injected_pg_password"
+  add_or_update_kv env_map key_order POSTGRES_HOST "db"
+  add_or_update_kv env_map key_order POSTGRES_PORT "5432"
 
   tmp="$(mktemp)"
   cleanup_envfiles+=("$tmp")
   {
-    for line in "${new_lines[@]}"; do
-      printf '%s\n' "$line"
+    for key in "${key_order[@]}"; do
+      printf '%s=%s\n' "$key" "${env_map[$key]}"
     done
-    printf 'PGPASSWORD=%s\n' "$injected_pg_password"
-    printf 'SUPABASE_SUPER_ROLE=%s\n' "$injected_super_role"
-    printf 'SUPABASE_SUPER_PASSWORD=%s\n' "$injected_super_password"
   } >"$tmp"
 
   echo "$tmp"
@@ -161,6 +190,7 @@ envfile="$(prepare_envfile "$repo_envfile")"
 echo "ℹ️  Prepared ephemeral env file for Supabase lane '$lane' (source: $envfile_source, credentials: $credentials_file)" >&2
 if [[ "$compose_source" == "official" ]]; then
   echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
+  echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
 else
   echo "ℹ️  Using bundled Supabase compose definition at $default_compose" >&2
 fi
