@@ -432,10 +432,10 @@ sync_pg_host_port_with_compose() {
 
   if [[ "$resolved_port" == "0" ]]; then
     {
-      echo "❌ docker compose reported a published Postgres port of 0 for lane '$lane'."
-      echo "   Ensure PGHOST_PORT in $repo_envfile maps to an available host port and rerun the deploy."
+      echo "⚠️  docker compose reported a published Postgres port of 0 for lane '$lane'."
+      echo "   Keeping existing PGHOST_PORT=$pg_host_port from $repo_envfile."
     } >&2
-    exit 1
+    return 1
   fi
 
   if [[ "$resolved_port" != "$pg_host_port" ]]; then
