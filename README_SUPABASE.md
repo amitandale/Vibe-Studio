@@ -30,7 +30,7 @@ workflow runs.
 ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ```
 
-The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
+The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Deploy workflows download the official Supabase compose definition to `ops/supabase/lanes/latest-docker-compose.yml` on every run and `scripts/supabase/lane.sh` automatically prefers that file when it exists (falling back to the bundled `ops/supabase/docker-compose.yml`). Refresh the downloaded compose locally with the same `curl` command before making changes so you can diff upstream updates intentionally. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
 
 After editing a lane env file, run the validation helper to ensure all required variables—including Kong and Postgres port
 assignments—are present and non-empty:
