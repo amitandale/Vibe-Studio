@@ -29,6 +29,16 @@ jobs:
             echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           fi
 
+      - name: Repair lane workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy_dir="${{ steps.vars.outputs.deploy_dir }}"
+          if [[ -d "$deploy_dir" ]]; then
+            echo "ℹ️  Repairing workspace ownership for $deploy_dir"
+            sudo chown -R "$(id -u)":"$(id -g)" "$deploy_dir"
+          fi
+
       - name: Create deployment directory
         run: mkdir -p ${{ steps.vars.outputs.deploy_dir }}
 
