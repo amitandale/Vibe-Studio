@@ -54,9 +54,9 @@ truth for authentication data.
 2. **Download the official Supabase compose assets** so helpers can hydrate defaults straight from upstream:
    ```bash
    mkdir -p ops/supabase/lanes
-   curl -sSfL https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml \
+   curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml \
      -o ops/supabase/lanes/latest-docker-compose.yml
-   curl -sSfL https://github.com/supabase/supabase/raw/master/docker/.env \
+   curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example \
      -o ops/supabase/lanes/latest-docker.env
    ```
    The automation refuses to run if either file is missing, keeping the single source of truth anchored to the Supabase repository.

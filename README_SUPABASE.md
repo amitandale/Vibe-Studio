@@ -27,9 +27,9 @@ workflow runs.
 ```bash
 # Fetch Supabase's latest compose + env templates once per runner
 mkdir -p ops/supabase/lanes
-curl -sSfL https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml \
+curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml \
   -o ops/supabase/lanes/latest-docker-compose.yml
-curl -sSfL https://github.com/supabase/supabase/raw/master/docker/.env \
+curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example \
   -o ops/supabase/lanes/latest-docker.env
 
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'

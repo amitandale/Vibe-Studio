@@ -43,8 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ops/supabase/lanes
-          compose_url="https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml"
-          env_url="https://github.com/supabase/supabase/raw/master/docker/.env"
+          compose_url="https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml"
+          env_url="https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example"
           curl -sSfL "$compose_url" -o ops/supabase/lanes/latest-docker-compose.yml
           curl -sSfL "$env_url" -o ops/supabase/lanes/latest-docker.env
           echo "Fetched Supabase compose definition from $compose_url"
