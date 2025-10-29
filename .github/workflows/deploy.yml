@@ -161,6 +161,22 @@ jobs:
           echo "   Compose directory: $(realpath "$compose_dir")"
           echo "   Compose file: $(realpath "$compose_file")"
 
+          if [[ ! -f "$envfile" ]]; then
+            echo "❌ Lane env file missing: $envfile" >&2
+            exit 1
+          fi
+
+          if [[ ! -d "$compose_dir" ]]; then
+            echo "❌ Supabase compose directory missing: $compose_dir" >&2
+            exit 1
+          fi
+
+          if [[ ! -f "$compose_file" ]]; then
+            echo "❌ Supabase compose definition missing: $compose_file" >&2
+            exit 1
+          fi
+
+          echo "ℹ️  Aligning images with $(basename "$compose_file")"
           docker compose \
             --project-directory "$compose_dir" \
             --env-file "$envfile" \
@@ -173,6 +189,13 @@ jobs:
             --env-file "$envfile" \
             -f "$compose_file" \
             images
+
+          echo "ℹ️  Images referenced by compose definition"
+          docker compose \
+            --project-directory "$compose_dir" \
+            --env-file "$envfile" \
+            -f "$compose_file" \
+            config --images
 
       - name: Capture Supabase lane state
         id: supabase_state
