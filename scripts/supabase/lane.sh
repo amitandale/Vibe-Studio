@@ -197,6 +197,31 @@ fi
 
 export ENV_FILE="$envfile"
 
+should_redact_key() {
+  local key="$1"
+  [[ "$key" =~ (PASS|PASSWORD|SECRET|TOKEN|KEY|JWT|ACCESS|PRIVATE|DATABASE_URL|SUPABASE_URL) ]]
+}
+
+sanitize_env_line() {
+  local line="$1"
+
+  if [[ "$line" != *"="* ]]; then
+    printf '%s' "$line"
+    return
+  fi
+
+  local key="${line%%=*}"
+  local value="${line#*=}"
+
+  if should_redact_key "$key"; then
+    value="<redacted>"
+  elif [[ -z "$value" ]]; then
+    value="<empty>"
+  fi
+
+  printf '%s=%s' "$key" "$value"
+}
+
 source_lane_env() {
   local file="$1"
   local status
@@ -220,9 +245,33 @@ source_lane_env() {
         {
           echo "   Detected lines with unquoted whitespace that may break sourcing:"
           printf '     %s\n' "$suspicious"
+          echo "   Sanitized excerpts:"
+          while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            local line_no="${entry%%:*}"
+            local raw_line
+            raw_line=$(sed -n "${line_no}p" "$file")
+            printf '     %s: %s\n' "$line_no" "$(sanitize_env_line "$raw_line")"
+          done <<<"$suspicious"
         } >&2
       fi
     fi
+
+    {
+      echo "   Last 5 non-comment lines before failure (sanitized):"
+      local excerpt
+      excerpt=$(grep -nEv '^[[:space:]]*#' "$file" 2>/dev/null | tail -n 5 || true)
+      if [[ -n "$excerpt" ]]; then
+        while IFS= read -r entry; do
+          [[ -z "$entry" ]] && continue
+          local ln="${entry%%:*}"
+          local rest="${entry#*:}"
+          printf '     %s: %s\n' "$ln" "$(sanitize_env_line "$rest")"
+        done <<<"$excerpt"
+      else
+        echo "     <no non-comment lines detected>"
+      fi
+    } >&2
 
     {
       echo "   Tip: wrap values containing spaces in quotes (e.g., KEY=\"value with spaces\")."
