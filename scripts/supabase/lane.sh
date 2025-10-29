@@ -336,6 +336,118 @@ compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-fil
 declare -a compose_services_list=()
 compose_services_loaded=0
 
+persist_lane_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+
+  if [[ -z "$file" || -z "$key" ]]; then
+    return 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+
+  local tmp updated=0
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+      printf '%s\n' "$line" >>"$tmp"
+      continue
+    fi
+
+    local working="$line"
+    local leading="${working%%[![:space:]]*}"
+    working="${working#"$leading"}"
+
+    local prefix="$leading"
+    if [[ "$working" == export* ]]; then
+      working="${working#export}"
+      working="${working# }"
+      prefix+="export "
+    fi
+
+    if [[ "$working" != *"="* ]]; then
+      printf '%s\n' "$line" >>"$tmp"
+      continue
+    fi
+
+    local existing_key="${working%%=*}"
+    if [[ "$existing_key" == "$key" ]]; then
+      printf '%s%s=%s\n' "$prefix" "$key" "$value" >>"$tmp"
+      updated=1
+    else
+      printf '%s\n' "$line" >>"$tmp"
+    fi
+  done <"$file"
+
+  if (( ! updated )); then
+    printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  fi
+
+  if ! chmod --reference "$file" "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp"
+  fi
+
+  mv "$tmp" "$file"
+}
+
+resolve_compose_service_port() {
+  local svc="$1"
+  local container_port="${2:-${PGPORT:-5432}}"
+
+  local output
+  output=$("${compose_cmd[@]}" port "$svc" "$container_port" 2>/dev/null || true)
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+
+  local first_line
+  first_line="${output%%$'\n'*}"
+  first_line="${first_line//$'\r'/}"
+  if [[ -z "$first_line" ]]; then
+    return 1
+  fi
+
+  local port="${first_line##*:}"
+  port="${port//[[:space:]]/}"
+  if [[ -z "$port" ]]; then
+    return 1
+  fi
+
+  echo "$port"
+}
+
+sync_pg_host_port_with_compose() {
+  local resolved_port
+  if ! resolved_port=$(resolve_compose_service_port db); then
+    {
+      echo "⚠️  Unable to determine published Postgres port from docker compose for lane '$lane'."
+      echo "   Command: docker compose port db ${PGPORT:-5432}"
+      echo "   Falling back to PGHOST_PORT=${pg_host_port} from env file."
+    } >&2
+    return 1
+  fi
+
+  if [[ "$resolved_port" == "0" ]]; then
+    {
+      echo "❌ docker compose reported a published Postgres port of 0 for lane '$lane'."
+      echo "   Ensure PGHOST_PORT in $repo_envfile maps to an available host port and rerun the deploy."
+    } >&2
+    exit 1
+  fi
+
+  if [[ "$resolved_port" != "$pg_host_port" ]]; then
+    {
+      echo "ℹ️  Detected published Postgres port $resolved_port (was $pg_host_port); updating lane environment."
+    } >&2
+    pg_host_port="$resolved_port"
+    export PGHOST_PORT="$pg_host_port"
+    persist_lane_env_value "$envfile" PGHOST_PORT "$pg_host_port"
+  fi
+}
+
 populate_compose_services() {
   if (( compose_services_loaded )); then
     return
@@ -1239,6 +1351,7 @@ case "$cmd" in
       db_phase_services+=(vector)
     fi
     run_compose_checked "up -d ${db_phase_services[*]}" up -d "${db_phase_services[@]}"
+    sync_pg_host_port_with_compose || true
     ;;
   db-health)
     if ! wait_for_pg; then
@@ -1281,7 +1394,7 @@ case "$cmd" in
       required_services=("${filtered_services[@]}")
     fi
     if (( ${#required_services[@]} == 0 )); then
-      required_services=(db vector kong)
+      required_services=(db kong)
     fi
 
     if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
