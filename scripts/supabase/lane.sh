@@ -196,8 +196,43 @@ else
 fi
 
 export ENV_FILE="$envfile"
-# shellcheck disable=SC1090
-set -a; source "$envfile"; set +a
+
+source_lane_env() {
+  local file="$1"
+  local status
+
+  set +e
+  # shellcheck disable=SC1090
+  set -a; source "$file"; status=$?; set +a
+  set -e
+
+  if (( status != 0 )); then
+    {
+      echo "❌ Failed to source Supabase lane environment for '$lane'."
+      echo "   Env file: $file"
+      echo "   Exit code: $status"
+    } >&2
+
+    if command -v awk >/dev/null 2>&1; then
+      local suspicious
+      suspicious=$(awk 'BEGIN{FS="="} /^[[:space:]]*#/ {next} NF >= 2 {val=substr($0, index($0, "=")+1); gsub(/[[:space:]]+$/, "", val); if (val ~ /[[:space:]]/ && val !~ /^".*"$/ && val !~ /^'\''.*'\''$/) print NR ":" $0}' "$file")
+      if [[ -n "$suspicious" ]]; then
+        {
+          echo "   Detected lines with unquoted whitespace that may break sourcing:"
+          printf '     %s\n' "$suspicious"
+        } >&2
+      fi
+    fi
+
+    {
+      echo "   Tip: wrap values containing spaces in quotes (e.g., KEY=\"value with spaces\")."
+      echo "   Regenerate the lane env with scripts/supabase/provision_lane_env.sh $lane if needed."
+    } >&2
+
+    exit "$status"
+  fi
+}
+source_lane_env "$envfile"
 compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
 
 run_compose_checked() {
