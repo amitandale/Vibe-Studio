@@ -20,18 +20,20 @@ fi
 
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-default_compose="$root/ops/supabase/docker-compose.yml"
 official_compose="$root/ops/supabase/lanes/latest-docker-compose.yml"
 official_env_template="$root/ops/supabase/lanes/latest-docker.env"
-compose="$default_compose"
-compose_source="bundled"
 
-if [[ -f "$official_compose" && -f "$official_env_template" ]]; then
-  compose="$official_compose"
-  compose_source="official"
-elif [[ -f "$official_compose" && ! -f "$official_env_template" ]]; then
-  echo "⚠️  Supabase official compose file present but $official_env_template missing; falling back to bundled compose." >&2
+if [[ ! -f "$official_compose" ]]; then
+  echo "Supabase compose definition missing at $official_compose; fetch it from the official repository before continuing." >&2
+  exit 1
 fi
+
+if [[ ! -f "$official_env_template" ]]; then
+  echo "Supabase compose environment template missing at $official_env_template; fetch it alongside the compose file before continuing." >&2
+  exit 1
+fi
+
+compose="$official_compose"
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 
@@ -241,12 +243,8 @@ prepare_envfile() {
 
 envfile="$(prepare_envfile "$repo_envfile")"
 echo "ℹ️  Prepared ephemeral env file for Supabase lane '$lane' (source: $envfile_source, credentials: $credentials_file)" >&2
-if [[ "$compose_source" == "official" ]]; then
-  echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
-  echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
-else
-  echo "ℹ️  Using bundled Supabase compose definition at $default_compose" >&2
-fi
+echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
+echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
 
 export ENV_FILE="$envfile"
 
@@ -1161,7 +1159,7 @@ print_service_diagnostics() {
 
 case "$cmd" in
   start)
-    run_compose_checked "up -d --remove-orphans" up -d --remove-orphans
+    run_compose_checked "up -d" up -d
     ;;
   stop)
     run_compose_checked "down" down

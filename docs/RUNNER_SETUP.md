@@ -51,7 +51,7 @@ Repeat for `work` and `codex` lanes adjusting ports as needed.
 
 - **Missing env file** → Run `./scripts/supabase/provision_lane_env.sh <lane>` and re-try validation.
 - **Permission denied on env file** → Ensure files are owned by the runner user and have mode `600`.
-- **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free, then verify the tags in `ops/supabase/docker-compose.yml` exist in Docker Hub. Update the compose file when Supabase ships a new release and rerun the provisioning script so credentials stay in sync.
+- **Docker compose fails to start** → Confirm ports 5433/5434/5435 and 8101/8102/8103 are free, then verify the tags in `ops/supabase/lanes/latest-docker-compose.yml` exist in Docker Hub. Refresh the downloaded compose file when Supabase ships a new release and rerun the provisioning script so credentials stay in sync.
 - **Edge runtime cannot read env** → Verify `EDGE_ENV_FILE` points to a readable file mounted on the host.
 - **Superuser override missing** → Update `ops/supabase/lanes/credentials.env` with the correct admin password and regenerate with `./scripts/supabase/provision_lane_env.sh <lane> --force --pg-super-role supabase_admin`.
 

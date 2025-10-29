@@ -45,18 +45,10 @@ jobs:
           mkdir -p ops/supabase/lanes
           compose_url="https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml"
           env_url="https://github.com/supabase/supabase/raw/master/docker/.env"
-          if curl -sSfL "$compose_url" -o ops/supabase/lanes/latest-docker-compose.yml; then
-            echo "Fetched Supabase compose definition from $compose_url"
-          else
-            echo "::warning::Failed to download $compose_url; keeping bundled compose definition" >&2
-            rm -f ops/supabase/lanes/latest-docker-compose.yml
-          fi
-          if curl -sSfL "$env_url" -o ops/supabase/lanes/latest-docker.env; then
-            echo "Fetched Supabase compose environment template from $env_url"
-          else
-            echo "::warning::Failed to download $env_url; bundled compose will be used unless a cached template exists" >&2
-            rm -f ops/supabase/lanes/latest-docker.env
-          fi
+          curl -sSfL "$compose_url" -o ops/supabase/lanes/latest-docker-compose.yml
+          curl -sSfL "$env_url" -o ops/supabase/lanes/latest-docker.env
+          echo "Fetched Supabase compose definition from $compose_url"
+          echo "Fetched Supabase compose environment template from $env_url"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3

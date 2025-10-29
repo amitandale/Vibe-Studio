@@ -14,6 +14,18 @@ Install the following utilities on the runner that operates the lanes:
 
 The GitHub Actions workflow invokes these scripts, so each dependency must be available in the automation environment as well.
 
+Download the official Supabase compose definition and `.env` template so every script references the upstream source of truth:
+
+```bash
+mkdir -p ops/supabase/lanes
+curl -sSfL https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml \
+  -o ops/supabase/lanes/latest-docker-compose.yml
+curl -sSfL https://github.com/supabase/supabase/raw/master/docker/.env \
+  -o ops/supabase/lanes/latest-docker.env
+```
+
+The tooling refuses to run if either file is missing to avoid drifting from Supabase's published configuration.
+
 ## Generate lane environment files
 
 Lane configuration files live in `ops/supabase/lanes/<lane>.env`, while passwords and superuser credentials are sourced exclusively from `ops/supabase/lanes/credentials.env`. Review that credentials file to confirm the Postgres and `supabase_admin` passwords for each lane, then use the provisioning script to create the env files:

@@ -51,7 +51,16 @@ truth for authentication data.
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
+2. **Download the official Supabase compose assets** so helpers can hydrate defaults straight from upstream:
+   ```bash
+   mkdir -p ops/supabase/lanes
+   curl -sSfL https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml \
+     -o ops/supabase/lanes/latest-docker-compose.yml
+   curl -sSfL https://github.com/supabase/supabase/raw/master/docker/.env \
+     -o ops/supabase/lanes/latest-docker.env
+   ```
+   The automation refuses to run if either file is missing, keeping the single source of truth anchored to the Supabase repository.
+3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
    - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:
      ```bash
@@ -59,7 +68,7 @@ truth for authentication data.
      ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin
      ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin
      ```
-     Supabase service versions are pinned directly inside `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer release.
+     Supabase service versions track the upstream compose file you downloaded. To pin a particular release, fetch the compose and `.env` from the desired Supabase tag before running the helper.
    - To rotate passwords, edit `credentials.env` (or pass explicit `--pg-password/--pg-super-password` flags) and rerun the helper. The next deploy automatically injects the updated credentials into the database and Compose runtime.
    - Restored clusters that keep a legacy superuser should update `credentials.env` (or pass overrides) with that account so the deploy workflow can recreate the primary `PGUSER` when it is missing:
      ```bash
@@ -119,9 +128,9 @@ stored roles using those credentials before migrations run, so the lane is heale
 
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner. This regenerates `ops/supabase/lanes/<lane>.env` from the checked-in credentials.
 - **Weak password warning**: Update the password in `ops/supabase/lanes/credentials.env`, rerun the provisioning script, and redeploy.
-- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/docker-compose.yml`. If an upstream tag disappears, update the compose file to a supported release and rerun the provisioning helper so configuration files stay in sync.
+- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/lanes/latest-docker-compose.yml`. If an upstream tag disappears, update the download URLs (or fetch a tagged release) and rerun the provisioning helper so configuration files stay in sync.
 - **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper never modifies the Supabase admin password, so the stored secret must match the database before re-running the deploy.
-- **Kong not healthy**: Review logs via `docker compose -f ops/supabase/docker-compose.yml logs kong` with the lane env sourced.
+- **Kong not healthy**: Review logs via `docker compose -f ops/supabase/lanes/latest-docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 
 ## 📚 References

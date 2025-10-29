@@ -25,6 +25,13 @@ workflow runs.
    values with the real configuration before running the provisioning helper:
 
 ```bash
+# Fetch Supabase's latest compose + env templates once per runner
+mkdir -p ops/supabase/lanes
+curl -sSfL https://github.com/supabase/supabase/raw/master/docker/docker-compose.yml \
+  -o ops/supabase/lanes/latest-docker-compose.yml
+curl -sSfL https://github.com/supabase/supabase/raw/master/docker/.env \
+  -o ops/supabase/lanes/latest-docker.env
+
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
@@ -39,8 +46,8 @@ assignments—are present and non-empty:
 ./scripts/supabase/validate_lane_env.sh <lane>
 ```
 
-The deploy workflow invokes the same validation before running `docker compose`, so catching the failures locally helps keep CI
-green.
+The deploy workflow invokes the same validation before running `docker compose`, and it refuses to proceed unless the downloaded
+Supabase compose assets are present. Catching failures locally helps keep CI green.
 
 If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `credentials.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 
