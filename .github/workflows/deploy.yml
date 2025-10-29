@@ -233,8 +233,7 @@ jobs:
             echo "running=true" >> "$GITHUB_OUTPUT"
           else
             echo "running=false" >> "$GITHUB_OUTPUT"
-            echo "🚨 Supabase lane status check failed for lane '$LANE'" >&2
-            exit "$status"
+            echo "⚠️  Supabase lane status check returned exit code $status for lane '$LANE'; continuing with phased redeploy." >&2
           fi
 
       - name: Stop lane services and bring DB up
@@ -252,6 +251,15 @@ jobs:
           echo "ℹ️  Starting Postgres-only mode for migrations"
           scripts/supabase/lane.sh "$LANE" db-only
           scripts/supabase/lane.sh "$LANE" db-health
+
+      - name: Validate Supabase db-only services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+          LANE_STATUS_REQUIRED_SERVICES: "db vector"
+        run: |
+          echo "ℹ️  Validating db-only Supabase services for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
 
       - name: Apply DB migrations (transactional + advisory lock)
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
@@ -290,6 +298,15 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: scripts/supabase/edge_deploy.sh "$LANE"
+
+      - name: Validate Supabase full stack services
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          echo "ℹ️  Validating full Supabase stack for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
 
       - name: Use Node.js
         uses: actions/setup-node@v4

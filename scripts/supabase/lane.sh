@@ -333,6 +333,42 @@ source_lane_env "$envfile"
 # Supabase images are already refreshed to match the upstream compose definition.
 compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$envfile" -f "$compose")
 
+declare -a compose_services_list=()
+compose_services_loaded=0
+
+populate_compose_services() {
+  if (( compose_services_loaded )); then
+    return
+  fi
+
+  local output
+  if output=$("${compose_cmd[@]}" config --services 2>/dev/null); then
+    if [[ -n "${output}" ]]; then
+      mapfile -t compose_services_list <<<"$output"
+    else
+      compose_services_list=()
+    fi
+  else
+    compose_services_list=()
+  fi
+
+  compose_services_loaded=1
+}
+
+compose_has_service() {
+  local target="$1"
+  populate_compose_services
+
+  local svc
+  for svc in "${compose_services_list[@]}"; do
+    if [[ "$svc" == "$target" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 run_compose_checked() {
   local context="$1"
   shift
@@ -1198,7 +1234,11 @@ case "$cmd" in
     run_compose_checked "down" down
     ;;
   db-only)
-    run_compose_checked "up -d db" up -d db
+    declare -a db_phase_services=(db)
+    if compose_has_service vector; then
+      db_phase_services+=(vector)
+    fi
+    run_compose_checked "up -d ${db_phase_services[*]}" up -d "${db_phase_services[@]}"
     ;;
   db-health)
     if ! wait_for_pg; then
@@ -1226,6 +1266,24 @@ case "$cmd" in
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)
+    declare -a required_services=()
+    if [[ -n "${LANE_STATUS_REQUIRED_SERVICES:-}" ]]; then
+      old_ifs="$IFS"
+      IFS=', '
+      read -r -a required_services <<<"${LANE_STATUS_REQUIRED_SERVICES//,/ }"
+      IFS="$old_ifs"
+      filtered_services=()
+      for svc in "${required_services[@]}"; do
+        if [[ -n "$svc" ]]; then
+          filtered_services+=("$svc")
+        fi
+      done
+      required_services=("${filtered_services[@]}")
+    fi
+    if (( ${#required_services[@]} == 0 )); then
+      required_services=(db vector kong)
+    fi
+
     if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
       {
         echo "❌ Supabase lane status check failed to query docker compose state for lane '$lane'."
@@ -1311,7 +1369,6 @@ case "$cmd" in
             exit 1
           fi
 
-          declare -a required_services=(db kong)
           declare -a missing_services=()
           declare -a inactive_services=()
           declare -A service_state_map=()
@@ -1444,7 +1501,7 @@ case "$cmd" in
     fi
     ps_output=$("${compose_cmd[@]}" ps 2>/dev/null || true)
     missing_services=()
-    for svc in db kong; do
+    for svc in "${required_services[@]}"; do
       if ! grep -qiE "\b${svc}\b.*(up|running)" <<<"$ps_output"; then
         missing_services+=("$svc")
       fi
@@ -1474,8 +1531,9 @@ case "$cmd" in
       diag_targets[$svc]=1
     done
     if (( ${#diag_targets[@]} == 0 )); then
-      diag_targets[db]=1
-      diag_targets[kong]=1
+      for svc in "${required_services[@]}"; do
+        diag_targets[$svc]=1
+      done
     fi
 
     for svc in "${!diag_targets[@]}"; do
