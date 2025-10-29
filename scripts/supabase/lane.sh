@@ -85,6 +85,31 @@ if [[ -z "$injected_super_password" ]]; then
   exit 1
 fi
 
+should_redact_key() {
+  local key="$1"
+  [[ "$key" =~ (PASS|PASSWORD|SECRET|TOKEN|KEY|JWT|ACCESS|PRIVATE|DATABASE_URL|SUPABASE_URL) ]]
+}
+
+sanitize_env_line() {
+  local line="$1"
+
+  if [[ "$line" != *"="* ]]; then
+    printf '%s' "$line"
+    return
+  fi
+
+  local key="${line%%=*}"
+  local value="${line#*=}"
+
+  if should_redact_key "$key"; then
+    value="<redacted>"
+  elif [[ -z "$value" ]]; then
+    value="<empty>"
+  fi
+
+  printf '%s=%s' "$key" "$value"
+}
+
 add_or_update_kv() {
   local map_ref="$1"
   local order_ref="$2"
@@ -108,6 +133,7 @@ prepare_envfile() {
 
   declare -A env_map=()
   declare -a key_order=()
+  declare -a invalid_lines=()
 
   if [[ -f "$official_env_template" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -126,19 +152,31 @@ prepare_envfile() {
   local pg_port="${env_map[PGPORT]:-}"
   local host_port="${env_map[PGHOST_PORT]:-}"
 
-  local line key value
-  for line in "${env_lines[@]}"; do
+  local idx line line_no assignment key value leading
+  for idx in "${!env_lines[@]}"; do
+    line="${env_lines[$idx]}"
+    line_no=$((idx + 1))
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" == "" ]] && continue
-    if [[ "$line" != *"="* ]]; then
+    assignment="$line"
+    # Trim leading whitespace once for analysis
+    leading="${assignment%%[![:space:]]*}"
+    assignment="${assignment#"$leading"}"
+    if [[ "$assignment" == export* ]]; then
+      assignment="${assignment#export}"
+      leading="${assignment%%[![:space:]]*}"
+      assignment="${assignment#"$leading"}"
+    fi
+    if [[ "$assignment" != *"="* ]]; then
+      invalid_lines+=("$line_no:$line")
       continue
     fi
-    key="${line%%=*}"
-    value="${line#*=}"
+    key="${assignment%%=*}"
+    value="${assignment#*=}"
     case "$key" in
       PGPORT)
         pg_port="$value"
-        ;; 
+        ;;
       PGHOST_PORT)
         host_port="$value"
         ;;
@@ -150,6 +188,21 @@ prepare_envfile() {
     esac
     add_or_update_kv env_map key_order "$key" "$value"
   done
+
+  if (( ${#invalid_lines[@]} > 0 )); then
+    {
+      echo "❌ Supabase lane env file '$src' contains lines that are not valid KEY=value assignments."
+      echo "   Problematic lines (sanitized):"
+      local entry line_no raw
+      for entry in "${invalid_lines[@]}"; do
+        line_no="${entry%%:*}"
+        raw="${entry#*:}"
+        printf '     %s: %s\n' "$line_no" "$(sanitize_env_line "$raw")"
+      done
+      echo "   Comment out notes with '#' or regenerate the env with scripts/supabase/provision_lane_env.sh $lane."
+    } >&2
+    exit 1
+  fi
 
   if [[ -z "$pg_port" ]]; then
     pg_port="5432"
@@ -196,31 +249,6 @@ else
 fi
 
 export ENV_FILE="$envfile"
-
-should_redact_key() {
-  local key="$1"
-  [[ "$key" =~ (PASS|PASSWORD|SECRET|TOKEN|KEY|JWT|ACCESS|PRIVATE|DATABASE_URL|SUPABASE_URL) ]]
-}
-
-sanitize_env_line() {
-  local line="$1"
-
-  if [[ "$line" != *"="* ]]; then
-    printf '%s' "$line"
-    return
-  fi
-
-  local key="${line%%=*}"
-  local value="${line#*=}"
-
-  if should_redact_key "$key"; then
-    value="<redacted>"
-  elif [[ -z "$value" ]]; then
-    value="<empty>"
-  fi
-
-  printf '%s=%s' "$key" "$value"
-}
 
 source_lane_env() {
   local file="$1"
