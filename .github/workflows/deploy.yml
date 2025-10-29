@@ -151,11 +151,17 @@ jobs:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
           envfile="ops/supabase/lanes/${LANE}.env"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          echo "ℹ️  Capturing Supabase lane state"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose file: $(realpath "$compose_file")"
           if [[ ! -f "$envfile" ]]; then
             echo "volume_present=false" >> "$GITHUB_OUTPUT"
             echo "running=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "ℹ️  Invoking scripts/supabase/lane.sh $LANE status"
           set -a
           # shellcheck disable=SC1090
           source "$envfile"
@@ -183,11 +189,14 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          echo "ℹ️  Preparing to stop Supabase lane services for lane $LANE"
           if [[ "${{ steps.supabase_state.outputs.running }}" == "true" ]]; then
+            echo "ℹ️  Lane $LANE previously running; invoking stop command"
             scripts/supabase/lane.sh "$LANE" stop
           else
             echo "Supabase lane $LANE was not running prior to deploy; skip stop."
           fi
+          echo "ℹ️  Starting Postgres-only mode for migrations"
           scripts/supabase/lane.sh "$LANE" db-only
           scripts/supabase/lane.sh "$LANE" db-health
 
@@ -202,8 +211,11 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          echo "ℹ️  Starting Supabase services for lane $LANE"
           if [[ "${{ steps.supabase_state.outputs.running }}" == "true" || "${{ steps.supabase_state.outputs.volume_present }}" != "true" ]]; then
+            echo "ℹ️  Running scripts/supabase/lane.sh $LANE start to launch full stack"
             scripts/supabase/lane.sh "$LANE" start
+            echo "ℹ️  scripts/supabase/lane.sh $LANE start completed"
           else
             echo "Supabase lane $LANE was previously stopped; removing transient db-only container."
             scripts/supabase/lane.sh "$LANE" stop

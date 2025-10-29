@@ -337,6 +337,12 @@ run_compose_checked() {
   local -a full_cmd=("${compose_cmd[@]}" "$@")
   local output status
 
+  {
+    echo "ℹ️  [$context] Executing docker compose for lane '$lane'."
+    echo "   Working directory: $(pwd)"
+    echo "   Command: ${full_cmd[*]}"
+  } >&2
+
   set +e
   output=$("${full_cmd[@]}" 2>&1)
   status=$?
@@ -353,6 +359,10 @@ run_compose_checked() {
     } >&2
     exit "$status"
   fi
+
+  {
+    echo "ℹ️  [$context] docker compose exit code: $status"
+  } >&2
 
   if [[ -n "$output" ]]; then
     printf '%s\n' "$output"
