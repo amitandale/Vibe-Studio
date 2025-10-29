@@ -200,6 +200,50 @@ export ENV_FILE="$envfile"
 set -a; source "$envfile"; set +a
 compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
 
+run_compose_checked() {
+  local context="$1"
+  shift
+
+  local -a full_cmd=("${compose_cmd[@]}" "$@")
+  local output status
+
+  set +e
+  output=$("${full_cmd[@]}" 2>&1)
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
+    if [[ -n "$output" ]]; then
+      printf '%s\n' "$output" >&2
+    fi
+    {
+      echo "❌ docker compose command failed while running '$context' for Supabase lane '$lane'."
+      echo "   Command: ${full_cmd[*]}"
+      echo "   Exit code: $status"
+    } >&2
+    exit "$status"
+  fi
+
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$output"
+    if grep -qi 'variable is not set' <<<"$output"; then
+      {
+        echo "❌ docker compose reported unset environment variables while running '$context' for lane '$lane'."
+        echo "   Review ${repo_envfile} and ensure all placeholders are populated."
+      } >&2
+      exit 1
+    fi
+    if grep -qiE 'invalid spec|empty section between colons' <<<"$output"; then
+      {
+        echo "❌ docker compose reported an invalid volume specification while running '$context' for lane '$lane'."
+        echo "   DOCKER_SOCKET_LOCATION=${DOCKER_SOCKET_LOCATION:-<unset>}"
+        echo "   Command: ${full_cmd[*]}"
+      } >&2
+      exit 1
+    fi
+  fi
+}
+
 require_lane_env_vars() {
   local missing=()
   local var
@@ -261,6 +305,53 @@ validate_slug_var() {
   fi
 }
 
+validate_positive_int() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+
+  if [[ -z "$value" || ! "$value" =~ ^[0-9]+$ ]]; then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name must be a positive integer (received '${value:-<unset>}')."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+}
+
+validate_socket_path() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+
+  if [[ "$value" != /* ]]; then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name must be an absolute path (received '$value')."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+}
+
+validate_url_var() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$value" =~ ^https?:// ]]; then
+    {
+      echo "❌ Supabase lane '$lane' environment variable $var_name must be an http(s) URL (received '$value')."
+      echo "   Update $repo_envfile or re-run scripts/supabase/provision_lane_env.sh $lane to regenerate the lane env file."
+    } >&2
+    exit 1
+  fi
+}
+
 require_lane_env_vars \
   COMPOSE_PROJECT_NAME \
   LANE \
@@ -268,15 +359,52 @@ require_lane_env_vars \
   ENV_FILE \
   PGHOST \
   PGPORT \
+  PGHOST_PORT \
   PGDATABASE \
   PGUSER \
   PGPASSWORD \
-  KONG_HTTP_PORT \
-  EDGE_PORT \
-  EDGE_ENV_FILE \
+  SUPABASE_SUPER_ROLE \
+  SUPABASE_SUPER_PASSWORD \
+  POSTGRES_HOST \
+  POSTGRES_PORT \
+  POSTGRES_DB \
+  POSTGRES_PASSWORD \
+  PG_META_CRYPTO_KEY \
+  PGRST_DB_SCHEMAS \
+  FUNCTIONS_VERIFY_JWT \
   JWT_SECRET \
   ANON_KEY \
-  SERVICE_ROLE_KEY
+  SERVICE_ROLE_KEY \
+  SUPABASE_ANON_KEY \
+  SUPABASE_SERVICE_KEY \
+  JWT_EXPIRY \
+  KONG_HTTP_PORT \
+  KONG_HTTPS_PORT \
+  EDGE_PORT \
+  EDGE_ENV_FILE \
+  SITE_URL \
+  SUPABASE_PUBLIC_URL \
+  SUPABASE_URL \
+  API_EXTERNAL_URL \
+  DOCKER_SOCKET_LOCATION \
+  LOGFLARE_PUBLIC_ACCESS_TOKEN \
+  LOGFLARE_PRIVATE_ACCESS_TOKEN \
+  VAULT_ENC_KEY \
+  SECRET_KEY_BASE \
+  POOLER_TENANT_ID \
+  POOLER_MAX_CLIENT_CONN \
+  POOLER_DB_POOL_SIZE \
+  POOLER_DEFAULT_POOL_SIZE \
+  POOLER_PROXY_PORT_TRANSACTION \
+  SMTP_HOST \
+  SMTP_PORT \
+  SMTP_ADMIN_EMAIL \
+  SMTP_SENDER_NAME \
+  IMGPROXY_ENABLE_WEBP_DETECTION \
+  STUDIO_DEFAULT_ORGANIZATION \
+  STUDIO_DEFAULT_PROJECT \
+  DASHBOARD_USERNAME \
+  DASHBOARD_PASSWORD
 
 pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
 export PGHOST_PORT="$pg_host_port"
@@ -284,10 +412,26 @@ export PGPORT="${PGPORT:-5432}"
 
 validate_port_var PGHOST_PORT
 validate_port_var PGPORT
+validate_port_var POSTGRES_PORT
 validate_port_var KONG_HTTP_PORT
+validate_port_var KONG_HTTPS_PORT
 validate_port_var EDGE_PORT
+validate_port_var SMTP_PORT
+validate_port_var POOLER_PROXY_PORT_TRANSACTION
 
 validate_slug_var VOL_NS
+
+validate_positive_int POOLER_MAX_CLIENT_CONN
+validate_positive_int POOLER_DB_POOL_SIZE
+validate_positive_int POOLER_DEFAULT_POOL_SIZE
+validate_positive_int JWT_EXPIRY
+
+validate_socket_path DOCKER_SOCKET_LOCATION
+
+validate_url_var SITE_URL
+validate_url_var SUPABASE_PUBLIC_URL
+validate_url_var SUPABASE_URL
+validate_url_var API_EXTERNAL_URL
 
 local_pg_host="127.0.0.1"
 if [[ ${PGHOST:-} == "localhost" || ${PGHOST:-} == "127.0.0.1" ]]; then
@@ -905,13 +1049,13 @@ print_service_diagnostics() {
 
 case "$cmd" in
   start)
-    "${compose_cmd[@]}" up -d --remove-orphans
+    run_compose_checked "up -d --remove-orphans" up -d --remove-orphans
     ;;
   stop)
-    "${compose_cmd[@]}" down
+    run_compose_checked "down" down
     ;;
   db-only)
-    "${compose_cmd[@]}" up -d db
+    run_compose_checked "up -d db" up -d db
     ;;
   db-health)
     if ! wait_for_pg; then
@@ -924,8 +1068,8 @@ case "$cmd" in
     fi
     ;;
   restart)
-    "${compose_cmd[@]}" down
-    "${compose_cmd[@]}" up -d
+    run_compose_checked "down" down
+    run_compose_checked "up -d" up -d
     ;;
   health)
     if ! wait_for_pg; then
