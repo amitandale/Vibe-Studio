@@ -787,9 +787,42 @@ service_expected_port() {
   esac
 }
 
+find_compose_container() {
+  local svc="$1"
+  local container=""
+
+  container="$("${compose_cmd[@]}" ps --format '{{.Name}}' "$svc" 2>/dev/null | head -n1 || true)"
+  if [[ -n "$container" ]]; then
+    echo "$container"
+    return 0
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    local docker_cmd=(docker ps -a --filter "label=com.docker.compose.service=${svc}")
+    if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+      docker_cmd+=(--filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}")
+    fi
+    docker_cmd+=(--format '{{.Names}}')
+    local ps_output
+    ps_output=$("${docker_cmd[@]}" 2>/dev/null)
+    container=$(printf '%s\n' "$ps_output" | head -n1)
+    if [[ -n "$container" ]]; then
+      echo "$container"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 print_service_diagnostics() {
   local svc="$1"
   local container="${2:-}"
+  local provided_container="$container"
+
+  if [[ -z "$container" ]]; then
+    container="$(find_compose_container "$svc" || true)"
+  fi
 
   {
     echo "---- ${svc} diagnostics ----"
@@ -806,15 +839,24 @@ print_service_diagnostics() {
     fi
   fi
 
-  if [[ -n "$container" ]]; then
-    docker inspect -f '   Container {{.Name}} status: {{.State.Status}} (health: {{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}})' "$container" >&2 || true
-    docker inspect -f '   Restart count: {{.RestartCount}}  StartedAt: {{.State.StartedAt}}' "$container" >&2 || true
+  local resolved_container="$container"
+  if [[ -z "$provided_container" && -n "$resolved_container" ]]; then
+    echo "   Container discovered via docker ps -a fallback: $resolved_container" >&2
+  fi
+
+  if [[ -n "$resolved_container" ]]; then
+    docker inspect -f '   Container {{.Name}} status: {{.State.Status}} (health: {{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}})' "$resolved_container" >&2 || true
+    docker inspect -f '   Restart count: {{.RestartCount}}  StartedAt: {{.State.StartedAt}}' "$resolved_container" >&2 || true
   else
-    echo "   Container for service '$svc' not found via docker compose ps." >&2
+    echo "   Container for service '$svc' not found via docker compose ps or docker ps -a." >&2
   fi
 
   echo "---- recent ${svc} logs ----" >&2
-  ("${compose_cmd[@]}" logs --tail 80 "$svc" >&2) || true
+  if ! "${compose_cmd[@]}" logs --tail 80 "$svc" >&2; then
+    if [[ -n "$resolved_container" ]]; then
+      docker logs --tail 80 "$resolved_container" >&2 || true
+    fi
+  fi
   echo "---- end ${svc} logs ----" >&2
 }
 
@@ -888,7 +930,38 @@ case "$cmd" in
                 error("compose ps output is not an array of services")
               end;
 
-            reduce inputs as $item ([]; . + ($item | to_services))
+            def label_map($raw):
+              ($raw // "") as $labels
+              | if ($labels | length) > 0 then
+                  $labels
+                  | split(",")
+                  | map(gsub("^\\s+"; ""))
+                  | map(select(index("=") != null))
+                  | map(capture("(?<k>[^=]+)=(?<v>.*)"))
+                  | reduce .[] as $item ({}; .[$item.k] = $item.v)
+                else
+                  {}
+                end;
+
+            def normalize($svc):
+              $svc as $orig
+              | $orig
+              | .ComposeService = (
+                  if ($orig.Service? | type=="string") and ($orig.Service // "") != "" then
+                    $orig.Service
+                  else
+                    (label_map($orig.Labels)["com.docker.compose.service"] // "")
+                  end
+                )
+              | .ComposeProject = (
+                  if ($orig.Project? | type=="string") and ($orig.Project // "") != "" then
+                    $orig.Project
+                  else
+                    (label_map($orig.Labels)["com.docker.compose.project"] // "")
+                  end
+                );
+
+            reduce inputs as $item ([]; . + [($item | to_services[]) | normalize(.)])
           ' 2>"$jq_err_file"); then
             echo "docker compose ps --format json produced unexpected payload; aborting status check." >&2
             if [[ -s "$jq_err_file" ]]; then
@@ -916,8 +989,32 @@ case "$cmd" in
           declare -A service_health_map=()
 
           for svc in "${required_services[@]}"; do
-            svc_json=$(jq -c --arg svc "$svc" '
-              first(.[] | select((.Service // .Name // "") == $svc)) // empty
+            svc_json=$(jq -c --arg svc "$svc" --arg project "${COMPOSE_PROJECT_NAME:-}" '
+              def matches_name($candidate):
+                ($candidate // "") as $value
+                | if $value == "" then
+                    false
+                  else
+                    ($value == $svc)
+                    or ($value | contains("-" + $svc + "-"))
+                    or ($value | endswith("-" + $svc))
+                    or ($value | contains("_" + $svc + "_"))
+                    or ($value | endswith("_" + $svc))
+                  end;
+
+              first(
+                .[]
+                | select(
+                    ((.ComposeService // "") == $svc)
+                    or ((.Service // "") == $svc)
+                    or matches_name(.Name)
+                  )
+                | select(
+                    ($project == "")
+                    or ((.ComposeProject // "") == "")
+                    or (.ComposeProject == $project)
+                  )
+              ) // empty
             ' <<<"$services_json")
 
             if [[ -z "${svc_json:-}" ]]; then
