@@ -37,6 +37,38 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
+      - name: Fetch official Supabase docker assets
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          set -euo pipefail
+
+          upstream_dir="ops/supabase/lanes/latest-docker"
+          tmp_dir="$(mktemp -d)"
+
+          echo "Cloning Supabase docker assets via sparse checkout"
+          git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmp_dir/supabase"
+          pushd "$tmp_dir/supabase" >/dev/null
+          git sparse-checkout set docker
+          git rev-parse HEAD > "$OLDPWD/supabase_commit.txt"
+          popd >/dev/null
+
+          rm -rf "$upstream_dir"
+          mkdir -p "$upstream_dir"
+          cp -a "$tmp_dir/supabase/docker/." "$upstream_dir/"
+
+          cp "$upstream_dir/docker-compose.yml" ops/supabase/lanes/latest-docker-compose.yml
+          cp "$upstream_dir/.env.example" ops/supabase/lanes/latest-docker.env
+
+          commit_sha="$(cat supabase_commit.txt)"
+          rm -f supabase_commit.txt
+          rm -rf "$tmp_dir"
+
+          echo "Fetched Supabase docker assets at commit $commit_sha"
+          echo "Compose directory: $upstream_dir"
+          echo "Compose file: ops/supabase/lanes/latest-docker-compose.yml"
+          echo "Env template: ops/supabase/lanes/latest-docker.env"
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -88,6 +120,18 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          envfile="${{ steps.vars.outputs.deploy_dir }}/ops/supabase/lanes/${LANE}.env"
+          if [ ! -s "$envfile" ]; then
+            echo "❌ Lane env file missing or empty: $envfile"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --interactive --pg-super-role supabase_admin"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
           if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
             echo ""
             echo "🚨 Lane environment not configured!"
@@ -100,6 +144,36 @@ jobs:
             exit 1
           fi
 
+      - name: Refresh Supabase images
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          set -euo pipefail
+
+          envfile="ops/supabase/lanes/${LANE}.env"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+
+          echo "ℹ️  Refreshing Supabase images"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose directory: $(realpath "$compose_dir")"
+          echo "   Compose file: $(realpath "$compose_file")"
+
+          docker compose \
+            --project-directory "$compose_dir" \
+            --env-file "$envfile" \
+            -f "$compose_file" \
+            pull
+
+          echo "ℹ️  Supabase images after pull"
+          docker compose \
+            --project-directory "$compose_dir" \
+            --env-file "$envfile" \
+            -f "$compose_file" \
+            images
+
       - name: Capture Supabase lane state
         id: supabase_state
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
@@ -107,11 +181,17 @@ jobs:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
           envfile="ops/supabase/lanes/${LANE}.env"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          echo "ℹ️  Capturing Supabase lane state"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose file: $(realpath "$compose_file")"
           if [[ ! -f "$envfile" ]]; then
             echo "volume_present=false" >> "$GITHUB_OUTPUT"
             echo "running=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "ℹ️  Invoking scripts/supabase/lane.sh $LANE status"
           set -a
           # shellcheck disable=SC1090
           source "$envfile"
@@ -139,11 +219,14 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          echo "ℹ️  Preparing to stop Supabase lane services for lane $LANE"
           if [[ "${{ steps.supabase_state.outputs.running }}" == "true" ]]; then
+            echo "ℹ️  Lane $LANE previously running; invoking stop command"
             scripts/supabase/lane.sh "$LANE" stop
           else
             echo "Supabase lane $LANE was not running prior to deploy; skip stop."
           fi
+          echo "ℹ️  Starting Postgres-only mode for migrations"
           scripts/supabase/lane.sh "$LANE" db-only
           scripts/supabase/lane.sh "$LANE" db-health
 
@@ -158,8 +241,11 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: |
+          echo "ℹ️  Starting Supabase services for lane $LANE"
           if [[ "${{ steps.supabase_state.outputs.running }}" == "true" || "${{ steps.supabase_state.outputs.volume_present }}" != "true" ]]; then
+            echo "ℹ️  Running scripts/supabase/lane.sh $LANE start to launch full stack"
             scripts/supabase/lane.sh "$LANE" start
+            echo "ℹ️  scripts/supabase/lane.sh $LANE start completed"
           else
             echo "Supabase lane $LANE was previously stopped; removing transient db-only container."
             scripts/supabase/lane.sh "$LANE" stop

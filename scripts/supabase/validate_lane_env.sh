@@ -22,6 +22,8 @@ esac
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 env_file="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
+official_docker_dir="$root/ops/supabase/lanes/latest-docker"
+official_compose="$official_docker_dir/docker-compose.yml"
 
 fail() {
   echo "❌ $1" >&2
@@ -33,6 +35,18 @@ fail() {
 
 if [[ ! -f "$env_file" ]]; then
   fail "Lane environment file $env_file not found." "Run scripts/supabase/provision_lane_env.sh $lane on the runner."
+fi
+
+if [[ ! -s "$env_file" ]]; then
+  fail "Lane environment file $env_file is empty." "Regenerate it with scripts/supabase/provision_lane_env.sh $lane."
+fi
+
+if [[ ! -d "$official_docker_dir" ]]; then
+  fail "Supabase docker assets missing at $official_docker_dir." "Fetch the docker directory from the Supabase repository before validating."
+fi
+
+if [[ ! -f "$official_compose" ]]; then
+  fail "Supabase compose definition missing at $official_compose." "Re-fetch the docker directory from Supabase."
 fi
 
 if grep -q '{{' "$env_file"; then
@@ -79,16 +93,52 @@ required_vars=(
   VOL_NS
   PGHOST
   PGPORT
+  PGHOST_PORT
   PGDATABASE
   PGUSER
+  PGPASSWORD
   SUPABASE_SUPER_ROLE
   SUPABASE_SUPER_PASSWORD
-  KONG_HTTP_PORT
-  EDGE_PORT
-  EDGE_ENV_FILE
+  POSTGRES_HOST
+  POSTGRES_PORT
+  POSTGRES_DB
+  POSTGRES_PASSWORD
+  PG_META_CRYPTO_KEY
+  PGRST_DB_SCHEMAS
+  FUNCTIONS_VERIFY_JWT
   JWT_SECRET
   ANON_KEY
   SERVICE_ROLE_KEY
+  SUPABASE_ANON_KEY
+  SUPABASE_SERVICE_KEY
+  JWT_EXPIRY
+  KONG_HTTP_PORT
+  KONG_HTTPS_PORT
+  EDGE_PORT
+  EDGE_ENV_FILE
+  SITE_URL
+  SUPABASE_PUBLIC_URL
+  SUPABASE_URL
+  API_EXTERNAL_URL
+  DOCKER_SOCKET_LOCATION
+  LOGFLARE_PUBLIC_ACCESS_TOKEN
+  LOGFLARE_PRIVATE_ACCESS_TOKEN
+  VAULT_ENC_KEY
+  SECRET_KEY_BASE
+  POOLER_TENANT_ID
+  POOLER_MAX_CLIENT_CONN
+  POOLER_DB_POOL_SIZE
+  POOLER_DEFAULT_POOL_SIZE
+  POOLER_PROXY_PORT_TRANSACTION
+  SMTP_HOST
+  SMTP_PORT
+  SMTP_ADMIN_EMAIL
+  SMTP_SENDER_NAME
+  IMGPROXY_ENABLE_WEBP_DETECTION
+  STUDIO_DEFAULT_ORGANIZATION
+  STUDIO_DEFAULT_PROJECT
+  DASHBOARD_USERNAME
+  DASHBOARD_PASSWORD
 )
 
 missing=()
@@ -102,17 +152,50 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   fail "Missing required variables: ${missing[*]}" "Update $env_file with the required values."
 fi
 
-if [[ -z "${PGPASSWORD:-}" ]]; then
-  fail "PGPASSWORD missing after credential injection." "Check ${pg_password_var} in $credentials_file."
+assert_numeric() {
+  local var_name="$1"
+  local value="${!var_name:-}"
+  local min="${2:-1}"
+  local max="${3:-65535}"
+
+  if [[ -z "$value" || ! "$value" =~ ^[0-9]+$ ]]; then
+    fail "$var_name must be a numeric value (received '${value:-<unset>}')." "Edit $env_file and re-run the provisioning script."
+  fi
+
+  if (( value < min || value > max )); then
+    fail "$var_name must be between $min and $max (received '$value')." "Edit $env_file and re-run the provisioning script."
+  fi
+}
+
+for port_var in PGPORT PGHOST_PORT POSTGRES_PORT KONG_HTTP_PORT KONG_HTTPS_PORT EDGE_PORT SMTP_PORT; do
+  assert_numeric "$port_var"
+done
+
+for numeric_var in POOLER_MAX_CLIENT_CONN POOLER_DB_POOL_SIZE POOLER_DEFAULT_POOL_SIZE POOLER_PROXY_PORT_TRANSACTION JWT_EXPIRY; do
+  assert_numeric "$numeric_var" 1 100000
+done
+
+if [[ "${PGPORT}" != "5432" ]]; then
+  echo "⚠️  PGPORT is '${PGPORT}', but containers should listen on 5432. Provision the lane env again to normalize ports." >&2
 fi
 
-if [[ -z "${PGHOST_PORT:-}" ]]; then
-  echo "ℹ️  PGHOST_PORT not set; host tooling will fall back to PGPORT (${PGPORT})." >&2
-else
-  if [[ "${PGPORT}" != "5432" ]]; then
-    echo "⚠️  PGPORT is '${PGPORT}', but containers should listen on 5432. Provision the lane env again to normalize ports." >&2
-  fi
+if [[ "${POSTGRES_PORT}" != "5432" ]]; then
+  echo "⚠️  POSTGRES_PORT is '${POSTGRES_PORT}', expected 5432 for Supabase Postgres." >&2
 fi
+
+if [[ ! "${VOL_NS}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+  fail "VOL_NS must use lowercase letters, numbers, or dashes (received '${VOL_NS}')." "Update VOL_NS in $env_file to a slug-safe value."
+fi
+
+if [[ "${DOCKER_SOCKET_LOCATION}" != /* ]]; then
+  fail "DOCKER_SOCKET_LOCATION must be an absolute path (received '${DOCKER_SOCKET_LOCATION}')." "Set it to /var/run/docker.sock or the correct Docker socket path."
+fi
+
+for url_var in SITE_URL SUPABASE_PUBLIC_URL SUPABASE_URL API_EXTERNAL_URL; do
+  if [[ ! "${!url_var}" =~ ^https?:// ]]; then
+    fail "$url_var must be an http(s) URL (received '${!url_var}')." "Update $env_file with a full URL including scheme."
+  fi
+done
 
 weak_regex='(changeme|password|test|example|temp|secret)'
 if [[ "${PGPASSWORD,,}" =~ $weak_regex ]]; then

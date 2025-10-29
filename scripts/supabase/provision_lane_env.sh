@@ -25,6 +25,8 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" || $# -eq 0 ]]; then
 fi
 
 lane="$1"; shift || true
+pg_host_port=""
+
 case "$lane" in
   main|work|codex) ;;
   *)
@@ -124,24 +126,17 @@ update_credentials_file() {
 }
 
 working_env_file="$lanes_dir/${lane}.env"
-existing_edge_env_file=""
-existing_jwt_secret=""
-existing_anon_key=""
-existing_service_key=""
-existing_super_role=""
-pg_host_port=""
 if [[ -f "$working_env_file" ]]; then
-  # shellcheck disable=SC1090
-  set -a; source "$working_env_file"; set +a
-  existing_edge_env_file="${EDGE_ENV_FILE:-}"
-  existing_jwt_secret="${JWT_SECRET:-}"
-  existing_anon_key="${ANON_KEY:-}"
-  existing_service_key="${SERVICE_ROLE_KEY:-}"
-  existing_super_role="${SUPABASE_SUPER_ROLE:-}"
   if [[ "$force" != true ]]; then
     echo "Updating existing $working_env_file" >&2
   fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$working_env_file"
+  set +a
 fi
+
+existing_edge_env_file="${EDGE_ENV_FILE:-}"
 
 case "$lane" in
   main)
@@ -215,43 +210,209 @@ if [[ "$pg_super_password_override" == true || "$pg_super_password" != "${creden
   update_credentials_file "${lane_upper}_SUPER_PASSWORD" "$pg_super_password"
 fi
 
-if [[ -z "$existing_jwt_secret" ]]; then
-  existing_jwt_secret="$(openssl rand -base64 32)"
+if [[ -z "$edge_env_file" ]]; then
+  edge_env_file="${existing_edge_env_file:-$default_edge_env}"
 fi
-if [[ -z "$existing_anon_key" ]]; then
-  existing_anon_key="$(openssl rand -hex 32)"
-fi
-if [[ -z "$existing_service_key" ]]; then
-  existing_service_key="$(openssl rand -hex 32)"
-fi
+
+random_hex() {
+  local bytes="$1"
+  openssl rand -hex "$bytes"
+}
+
+random_base64() {
+  local bytes="$1"
+  openssl rand -base64 "$bytes" | tr -d '\n'
+}
+
+escape_env_value() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"
+  value="${value//\`/\\\`}" # backticks
+  printf '"%s"' "$value"
+}
+
+ensure_existing_or_default() {
+  local key="$1" default_value="$2"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$default_value"
+  fi
+  printf '%s' "$current"
+}
+
+ensure_random_hex() {
+  local key="$1" bytes="$2"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$(random_hex "$bytes")"
+  fi
+  printf '%s' "$current"
+}
+
+ensure_random_base64() {
+  local key="$1" bytes="$2"
+  local current="${new_env[$key]:-${!key:-}}"
+  if [[ -z "$current" ]]; then
+    current="$(random_base64 "$bytes")"
+  fi
+  printf '%s' "$current"
+}
+
+declare -A new_env=()
+declare -a env_order=()
+
+set_env() {
+  local key="$1" value="$2"
+  new_env["$key"]="$value"
+  for existing_key in "${env_order[@]}"; do
+    if [[ "$existing_key" == "$key" ]]; then
+      return
+    fi
+  done
+  env_order+=("$key")
+}
 
 pg_container_port=5432
-cat <<ENV >"$working_env_file"
-COMPOSE_PROJECT_NAME=supa-${lane}
-LANE=${lane}
-VOL_NS=${lane}
+kong_https_default=$((kong_port + 443))
+site_url_default="http://127.0.0.1:${kong_port}"
 
-PGHOST=127.0.0.1
-PGHOST_PORT=${pg_host_port}
-PGPORT=${pg_container_port}
-PGDATABASE=${pg_db}
-PGUSER=postgres
-# PGPASSWORD is sourced from ops/supabase/lanes/credentials.env at runtime
-SUPABASE_SUPER_ROLE=${pg_super_role}
-# SUPABASE_SUPER_PASSWORD is sourced from ops/supabase/lanes/credentials.env at runtime
+jwt_secret="$(ensure_random_base64 JWT_SECRET 32)"
+anon_key="$(ensure_random_hex ANON_KEY 32)"
+service_key="$(ensure_random_hex SERVICE_ROLE_KEY 32)"
+pg_meta_crypto_key="$(ensure_random_hex PG_META_CRYPTO_KEY 32)"
+vault_enc_key="$(ensure_random_hex VAULT_ENC_KEY 32)"
+secret_key_base="$(ensure_random_hex SECRET_KEY_BASE 64)"
+logflare_public="$(ensure_existing_or_default LOGFLARE_PUBLIC_ACCESS_TOKEN "logflare-public-${lane}")"
+logflare_private="$(ensure_existing_or_default LOGFLARE_PRIVATE_ACCESS_TOKEN "logflare-private-${lane}")"
+dashboard_user="$(ensure_existing_or_default DASHBOARD_USERNAME "admin@${lane}.supabase.local")"
+dashboard_password="${new_env[DASHBOARD_PASSWORD]:-${DASHBOARD_PASSWORD:-}}"
+if [[ -z "$dashboard_password" ]]; then
+  dashboard_password="$(random_base64 24)"
+fi
 
-KONG_HTTP_PORT=${kong_port}
-EDGE_PORT=${edge_port}
-EDGE_ENV_FILE=${edge_env_file}
+set_env "COMPOSE_PROJECT_NAME" "supa-${lane}"
+set_env "LANE" "$lane"
+set_env "VOL_NS" "$lane"
+set_env "ENV_FILE" "$working_env_file"
 
-JWT_SECRET=${existing_jwt_secret}
-ANON_KEY=${existing_anon_key}
-SERVICE_ROLE_KEY=${existing_service_key}
-ENV
+set_env "PGHOST" "127.0.0.1"
+set_env "PGPORT" "$pg_container_port"
+set_env "PGHOST_PORT" "$pg_host_port"
+set_env "PGDATABASE" "$pg_db"
+set_env "PGUSER" "postgres"
+set_env "PGPASSWORD" "$pg_password"
+
+set_env "SUPABASE_SUPER_ROLE" "$pg_super_role"
+set_env "SUPABASE_SUPER_PASSWORD" "$pg_super_password"
+
+set_env "POSTGRES_HOST" "db"
+set_env "POSTGRES_PORT" "$pg_container_port"
+set_env "POSTGRES_USER" "postgres"
+set_env "POSTGRES_DB" "$pg_db"
+set_env "POSTGRES_PASSWORD" "$pg_password"
+
+set_env "PG_META_CRYPTO_KEY" "$pg_meta_crypto_key"
+set_env "PGRST_DB_SCHEMAS" "public,storage,graphql_public"
+set_env "FUNCTIONS_VERIFY_JWT" "true"
+set_env "JWT_SECRET" "$jwt_secret"
+set_env "ANON_KEY" "$anon_key"
+set_env "SERVICE_ROLE_KEY" "$service_key"
+set_env "SUPABASE_ANON_KEY" "$anon_key"
+set_env "SUPABASE_SERVICE_KEY" "$service_key"
+set_env "JWT_EXPIRY" "3600"
+
+set_env "KONG_HTTP_PORT" "$kong_port"
+set_env "KONG_HTTPS_PORT" "$(ensure_existing_or_default KONG_HTTPS_PORT "$kong_https_default")"
+
+set_env "EDGE_PORT" "$edge_port"
+set_env "EDGE_ENV_FILE" "$edge_env_file"
+
+set_env "SITE_URL" "$(ensure_existing_or_default SITE_URL "$site_url_default")"
+set_env "SUPABASE_PUBLIC_URL" "$(ensure_existing_or_default SUPABASE_PUBLIC_URL "$site_url_default")"
+set_env "SUPABASE_URL" "$(ensure_existing_or_default SUPABASE_URL "$site_url_default")"
+set_env "API_EXTERNAL_URL" "$(ensure_existing_or_default API_EXTERNAL_URL "$site_url_default")"
+set_env "DOCKER_SOCKET_LOCATION" "$(ensure_existing_or_default DOCKER_SOCKET_LOCATION "/var/run/docker.sock")"
+
+set_env "LOGFLARE_PUBLIC_ACCESS_TOKEN" "$logflare_public"
+set_env "LOGFLARE_PRIVATE_ACCESS_TOKEN" "$logflare_private"
+set_env "VAULT_ENC_KEY" "$vault_enc_key"
+set_env "SECRET_KEY_BASE" "$secret_key_base"
+
+set_env "POOLER_TENANT_ID" "$(ensure_existing_or_default POOLER_TENANT_ID "default")"
+set_env "POOLER_MAX_CLIENT_CONN" "$(ensure_existing_or_default POOLER_MAX_CLIENT_CONN "200")"
+set_env "POOLER_DB_POOL_SIZE" "$(ensure_existing_or_default POOLER_DB_POOL_SIZE "20")"
+set_env "POOLER_DEFAULT_POOL_SIZE" "$(ensure_existing_or_default POOLER_DEFAULT_POOL_SIZE "20")"
+set_env "POOLER_PROXY_PORT_TRANSACTION" "$(ensure_existing_or_default POOLER_PROXY_PORT_TRANSACTION "6432")"
+
+set_env "ENABLE_EMAIL_SIGNUP" "$(ensure_existing_or_default ENABLE_EMAIL_SIGNUP "true")"
+set_env "ENABLE_EMAIL_AUTOCONFIRM" "$(ensure_existing_or_default ENABLE_EMAIL_AUTOCONFIRM "false")"
+set_env "ENABLE_ANONYMOUS_USERS" "$(ensure_existing_or_default ENABLE_ANONYMOUS_USERS "true")"
+set_env "ENABLE_PHONE_SIGNUP" "$(ensure_existing_or_default ENABLE_PHONE_SIGNUP "false")"
+set_env "ENABLE_PHONE_AUTOCONFIRM" "$(ensure_existing_or_default ENABLE_PHONE_AUTOCONFIRM "false")"
+set_env "DISABLE_SIGNUP" "$(ensure_existing_or_default DISABLE_SIGNUP "false")"
+set_env "ADDITIONAL_REDIRECT_URLS" "$(ensure_existing_or_default ADDITIONAL_REDIRECT_URLS "$site_url_default")"
+
+set_env "SMTP_HOST" "$(ensure_existing_or_default SMTP_HOST "localhost")"
+set_env "SMTP_PORT" "$(ensure_existing_or_default SMTP_PORT "1025")"
+set_env "SMTP_USER" "$(ensure_existing_or_default SMTP_USER "supabase")"
+set_env "SMTP_PASS" "$(ensure_existing_or_default SMTP_PASS "supabase")"
+set_env "SMTP_ADMIN_EMAIL" "$(ensure_existing_or_default SMTP_ADMIN_EMAIL "admin@${lane}.supabase.local")"
+set_env "SMTP_SENDER_NAME" "$(ensure_existing_or_default SMTP_SENDER_NAME "Supabase ${lane^}")"
+
+set_env "MAILER_URLPATHS_EMAIL_CHANGE" "$(ensure_existing_or_default MAILER_URLPATHS_EMAIL_CHANGE "/auth/v1/verify")"
+set_env "MAILER_URLPATHS_CONFIRMATION" "$(ensure_existing_or_default MAILER_URLPATHS_CONFIRMATION "/auth/v1/verify")"
+set_env "MAILER_URLPATHS_INVITE" "$(ensure_existing_or_default MAILER_URLPATHS_INVITE "/auth/v1/verify")"
+set_env "MAILER_URLPATHS_RECOVERY" "$(ensure_existing_or_default MAILER_URLPATHS_RECOVERY "/auth/v1/verify")"
+
+set_env "IMGPROXY_ENABLE_WEBP_DETECTION" "$(ensure_existing_or_default IMGPROXY_ENABLE_WEBP_DETECTION "true")"
+
+set_env "STUDIO_DEFAULT_ORGANIZATION" "$(ensure_existing_or_default STUDIO_DEFAULT_ORGANIZATION "Vibe Supabase Org")"
+set_env "STUDIO_DEFAULT_PROJECT" "$(ensure_existing_or_default STUDIO_DEFAULT_PROJECT "Vibe Supabase Project")"
+
+set_env "DASHBOARD_USERNAME" "$dashboard_user"
+set_env "DASHBOARD_PASSWORD" "$dashboard_password"
+
+required_non_empty=(
+  COMPOSE_PROJECT_NAME LANE VOL_NS PGHOST PGPORT PGHOST_PORT PGDATABASE PGUSER PGPASSWORD
+  POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_PASSWORD
+  SUPABASE_SUPER_ROLE SUPABASE_SUPER_PASSWORD
+  JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SUPABASE_ANON_KEY SUPABASE_SERVICE_KEY
+  PG_META_CRYPTO_KEY SECRET_KEY_BASE VAULT_ENC_KEY
+  KONG_HTTP_PORT KONG_HTTPS_PORT EDGE_PORT EDGE_ENV_FILE
+  SITE_URL SUPABASE_PUBLIC_URL API_EXTERNAL_URL SUPABASE_URL
+  DOCKER_SOCKET_LOCATION LOGFLARE_PUBLIC_ACCESS_TOKEN LOGFLARE_PRIVATE_ACCESS_TOKEN
+  SMTP_HOST SMTP_PORT SMTP_ADMIN_EMAIL SMTP_SENDER_NAME
+  DASHBOARD_USERNAME DASHBOARD_PASSWORD
+)
+
+missing=()
+for key in "${required_non_empty[@]}"; do
+  if [[ -z "${new_env[$key]:-}" ]]; then
+    missing+=("$key")
+  fi
+done
+
+if (( ${#missing[@]} > 0 )); then
+  {
+    echo "❌ Unable to generate Supabase lane environment."
+    echo "   Missing values for: ${missing[*]}"
+  } >&2
+  exit 1
+fi
+
+{
+  for key in "${env_order[@]}"; do
+    printf '%s=%s\n' "$key" "$(escape_env_value "${new_env[$key]}")"
+  done
+} >"$working_env_file"
+
 chmod 600 "$working_env_file"
 
 cat <<MSG
 ✅ Supabase lane '$lane' environment written to $working_env_file
    Postgres password source: ${credentials_file}
    Superuser role: $pg_super_role
+   Docker socket mount: ${new_env[DOCKER_SOCKET_LOCATION]}
 MSG

@@ -20,15 +20,40 @@ workflow runs.
 2. Change into the deploy checkout (see workflow output for `deploy_dir`).
 3. Review `ops/supabase/lanes/credentials.env` and adjust the lane Postgres and `supabase_admin` passwords if needed. These
    values are committed for the dev VPS so CI/CD can reuse them automatically.
-4. Generate the lane env files (they will pick up the credentials from `credentials.env`):
+4. Generate the lane env files (they will pick up the credentials from `credentials.env`).
+   Copy `ops/supabase/lanes/lane.env.example` to `ops/supabase/lanes/<lane>.env` for each lane first, then replace the placeholder
+   values with the real configuration before running the provisioning helper:
 
 ```bash
+# Fetch Supabase's docker directory (compose + referenced assets) once per runner
+mkdir -p ops/supabase/lanes
+tmpdir=$(mktemp -d)
+git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
+git -C "$tmpdir/supabase" sparse-checkout set docker
+rm -rf ops/supabase/lanes/latest-docker
+cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
+cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
+cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
+rm -rf "$tmpdir"
+
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh codex --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ```
 
-The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. Replace the placeholder JWT keys with production grade values before exposing the APIs. Supabase service versions are pinned directly in `ops/supabase/docker-compose.yml`; update that file when you intentionally move to a newer upstream release. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
+The script writes a lane-specific env file to `ops/supabase/lanes/<lane>.env` with mode `600` while keeping passwords in `ops/supabase/lanes/credentials.env`. It now hydrates the Supabase env with sane defaults for every service exposed by the official compose file—including Kong, GoTrue, the pooler, and the Docker socket mount—so `docker compose` never falls back to blank values. Replace the placeholder JWT keys with production grade values before exposing the APIs. Deploy workflows reuse the generated env file directly; if `docker compose` prints any unset-variable warnings or invalid volume specs, `scripts/supabase/lane.sh` now aborts the deploy so you can fix the lane env instead of discovering the issue after the fact. Deploy workflows read the credentials straight from `credentials.env` on every run, so updating that file is enough to rotate passwords.
+
+After editing a lane env file, run the validation helper to ensure all required variables—including Kong and Postgres port
+assignments—are present and non-empty:
+
+```bash
+./scripts/supabase/validate_lane_env.sh <lane>
+```
+
+The deploy workflow invokes the same validation before running `docker compose`, and it refuses to proceed unless the downloaded
+Supabase compose assets are present. Catching failures locally helps keep CI green.
+
+As part of each deploy the workflow also executes `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` so the runner always uses images that match the upstream compose definition before starting services.
 
 If your restored database volumes use a different maintenance superuser than the default `supabase_admin`, pass `--pg-super-role` and `--pg-super-password` (or edit `credentials.env`) so the deploy workflow can log in with that account and recreate the `PGUSER` role when it goes missing. The helper never rotates the Supabase admin password automatically, so keep the stored value in sync with the database when you reset it manually.
 
