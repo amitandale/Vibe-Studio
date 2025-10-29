@@ -308,6 +308,23 @@ jobs:
           echo "ℹ️  Validating full Supabase stack for lane $LANE"
           scripts/supabase/lane.sh "$LANE" status
 
+      - name: Normalize Supabase workspace permissions
+        if: always()
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          set -euo pipefail
+
+          lane_root="$(pwd)"
+          state_dir="${lane_root}/../.supabase-state"
+
+          if [[ -d "${lane_root}/ops/supabase/lanes" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "${lane_root}/ops/supabase/lanes"
+          fi
+
+          if [[ -d "$state_dir" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "$state_dir"
+          fi
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
