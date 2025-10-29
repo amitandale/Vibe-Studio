@@ -25,12 +25,16 @@ workflow runs.
    values with the real configuration before running the provisioning helper:
 
 ```bash
-# Fetch Supabase's latest compose + env templates once per runner
+# Fetch Supabase's docker directory (compose + referenced assets) once per runner
 mkdir -p ops/supabase/lanes
-curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml \
-  -o ops/supabase/lanes/latest-docker-compose.yml
-curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example \
-  -o ops/supabase/lanes/latest-docker.env
+tmpdir=$(mktemp -d)
+git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
+git -C "$tmpdir/supabase" sparse-checkout set docker
+rm -rf ops/supabase/lanes/latest-docker
+cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
+cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
+cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
+rm -rf "$tmpdir"
 
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'

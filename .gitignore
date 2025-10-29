@@ -35,5 +35,6 @@ ops/supabase/lanes/*.env
 ops/supabase/lanes/superusers.env
 !ops/supabase/lanes/superusers.env.template
 !ops/supabase/lanes/credentials.env
+ops/supabase/lanes/latest-docker/
 ops/supabase/lanes/latest-docker-compose.yml
 ops/supabase/lanes/latest-docker.env

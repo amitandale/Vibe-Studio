@@ -22,6 +22,8 @@ esac
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 env_file="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
+official_docker_dir="$root/ops/supabase/lanes/latest-docker"
+official_compose="$official_docker_dir/docker-compose.yml"
 
 fail() {
   echo "❌ $1" >&2
@@ -37,6 +39,14 @@ fi
 
 if [[ ! -s "$env_file" ]]; then
   fail "Lane environment file $env_file is empty." "Regenerate it with scripts/supabase/provision_lane_env.sh $lane."
+fi
+
+if [[ ! -d "$official_docker_dir" ]]; then
+  fail "Supabase docker assets missing at $official_docker_dir." "Fetch the docker directory from the Supabase repository before validating."
+fi
+
+if [[ ! -f "$official_compose" ]]; then
+  fail "Supabase compose definition missing at $official_compose." "Re-fetch the docker directory from Supabase."
 fi
 
 if grep -q '{{' "$env_file"; then

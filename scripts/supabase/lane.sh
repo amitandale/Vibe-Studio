@@ -20,11 +20,17 @@ fi
 
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-official_compose="$root/ops/supabase/lanes/latest-docker-compose.yml"
-official_env_template="$root/ops/supabase/lanes/latest-docker.env"
+official_docker_dir="$root/ops/supabase/lanes/latest-docker"
+official_compose="$official_docker_dir/docker-compose.yml"
+official_env_template="$official_docker_dir/.env.example"
+
+if [[ ! -d "$official_docker_dir" ]]; then
+  echo "Supabase docker assets missing at $official_docker_dir; fetch them from the official repository before continuing." >&2
+  exit 1
+fi
 
 if [[ ! -f "$official_compose" ]]; then
-  echo "Supabase compose definition missing at $official_compose; fetch it from the official repository before continuing." >&2
+  echo "Supabase compose definition missing at $official_compose; fetch the docker folder from the official repository before continuing." >&2
   exit 1
 fi
 
@@ -257,6 +263,7 @@ fi
 
 echo "ℹ️  Prepared Supabase lane env file '$envfile' (source: $envfile_source, credentials: $credentials_file)" >&2
 echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
+echo "ℹ️  Compose project directory: $official_docker_dir" >&2
 echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
 
 export ENV_FILE="$envfile"
@@ -321,7 +328,7 @@ source_lane_env() {
   fi
 }
 source_lane_env "$envfile"
-compose_cmd=(docker compose --env-file "$envfile" -f "$compose")
+compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$envfile" -f "$compose")
 
 run_compose_checked() {
   local context="$1"

@@ -14,17 +14,21 @@ Install the following utilities on the runner that operates the lanes:
 
 The GitHub Actions workflow invokes these scripts, so each dependency must be available in the automation environment as well.
 
-Download the official Supabase compose definition and `.env` template so every script references the upstream source of truth:
+Fetch the entire `docker/` directory from Supabase so Compose has access to every referenced file (migrations, config mounts, etc.):
 
 ```bash
 mkdir -p ops/supabase/lanes
-curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml \
-  -o ops/supabase/lanes/latest-docker-compose.yml
-curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example \
-  -o ops/supabase/lanes/latest-docker.env
+tmpdir=$(mktemp -d)
+git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
+git -C "$tmpdir/supabase" sparse-checkout set docker
+rm -rf ops/supabase/lanes/latest-docker
+cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
+cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
+cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
+rm -rf "$tmpdir"
 ```
 
-The tooling refuses to run if either file is missing to avoid drifting from Supabase's published configuration.
+The tooling refuses to run if the directory (or the compose/env templates within it) is missing to avoid drifting from Supabase's published configuration.
 
 ## Generate lane environment files
 

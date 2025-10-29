@@ -51,15 +51,19 @@ truth for authentication data.
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Download the official Supabase compose assets** so helpers can hydrate defaults straight from upstream:
+2. **Download the official Supabase docker directory** so helpers can hydrate defaults straight from upstream and Compose can access every referenced asset:
    ```bash
    mkdir -p ops/supabase/lanes
-   curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml \
-     -o ops/supabase/lanes/latest-docker-compose.yml
-   curl -sSfL https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example \
-     -o ops/supabase/lanes/latest-docker.env
+   tmpdir=$(mktemp -d)
+   git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
+   git -C "$tmpdir/supabase" sparse-checkout set docker
+   rm -rf ops/supabase/lanes/latest-docker
+   cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
+   cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
+   cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
+   rm -rf "$tmpdir"
    ```
-   The automation refuses to run if either file is missing, keeping the single source of truth anchored to the Supabase repository.
+   The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the Supabase repository.
 3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
    - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:
@@ -128,9 +132,9 @@ stored roles using those credentials before migrations run, so the lane is heale
 
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner. This regenerates `ops/supabase/lanes/<lane>.env` from the checked-in credentials.
 - **Weak password warning**: Update the password in `ops/supabase/lanes/credentials.env`, rerun the provisioning script, and redeploy.
-- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/lanes/latest-docker-compose.yml`. If an upstream tag disappears, update the download URLs (or fetch a tagged release) and rerun the provisioning helper so configuration files stay in sync.
+- **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/lanes/latest-docker/docker-compose.yml`. If an upstream tag disappears, fetch a tagged release of the Supabase repository and rerun the provisioning helper so configuration files stay in sync.
 - **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper never modifies the Supabase admin password, so the stored secret must match the database before re-running the deploy.
-- **Kong not healthy**: Review logs via `docker compose -f ops/supabase/lanes/latest-docker-compose.yml logs kong` with the lane env sourced.
+- **Kong not healthy**: Review logs via `docker compose --project-directory ops/supabase/lanes/latest-docker -f ops/supabase/lanes/latest-docker/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 
 ## 📚 References

@@ -2,12 +2,18 @@
 set -euo pipefail
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-official_compose="$root/ops/supabase/lanes/latest-docker-compose.yml"
+official_docker_dir="$root/ops/supabase/lanes/latest-docker"
+official_compose="$official_docker_dir/docker-compose.yml"
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 
+if [[ ! -d "$official_docker_dir" ]]; then
+  echo "Supabase docker assets missing at $official_docker_dir; fetch them from the official repository before continuing." >&2
+  exit 1
+fi
+
 if [[ ! -f "$official_compose" ]]; then
-  echo "Supabase compose definition missing at $official_compose; fetch it from the official repository before continuing." >&2
+  echo "Supabase compose definition missing at $official_compose; fetch the docker folder from the official repository before continuing." >&2
   exit 1
 fi
 
@@ -99,4 +105,4 @@ cleanup_files+=("$tmp_env")
   printf 'SUPABASE_SUPER_PASSWORD=%s\n' "$super_password"
 } >"$tmp_env"
 
-docker compose --env-file "$tmp_env" -f "$official_compose" restart edge-runtime
+docker compose --project-directory "$official_docker_dir" --env-file "$tmp_env" -f "$official_compose" restart edge-runtime

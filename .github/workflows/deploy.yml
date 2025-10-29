@@ -37,18 +37,37 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
-      - name: Fetch official Supabase compose assets
+      - name: Fetch official Supabase docker assets
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
           set -euo pipefail
-          mkdir -p ops/supabase/lanes
-          compose_url="https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml"
-          env_url="https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example"
-          curl -sSfL "$compose_url" -o ops/supabase/lanes/latest-docker-compose.yml
-          curl -sSfL "$env_url" -o ops/supabase/lanes/latest-docker.env
-          echo "Fetched Supabase compose definition from $compose_url"
-          echo "Fetched Supabase compose environment template from $env_url"
+
+          upstream_dir="ops/supabase/lanes/latest-docker"
+          tmp_dir="$(mktemp -d)"
+
+          echo "Cloning Supabase docker assets via sparse checkout"
+          git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmp_dir/supabase"
+          pushd "$tmp_dir/supabase" >/dev/null
+          git sparse-checkout set docker
+          git rev-parse HEAD > "$OLDPWD/supabase_commit.txt"
+          popd >/dev/null
+
+          rm -rf "$upstream_dir"
+          mkdir -p "$upstream_dir"
+          cp -a "$tmp_dir/supabase/docker/." "$upstream_dir/"
+
+          cp "$upstream_dir/docker-compose.yml" ops/supabase/lanes/latest-docker-compose.yml
+          cp "$upstream_dir/.env.example" ops/supabase/lanes/latest-docker.env
+
+          commit_sha="$(cat supabase_commit.txt)"
+          rm -f supabase_commit.txt
+          rm -rf "$tmp_dir"
+
+          echo "Fetched Supabase docker assets at commit $commit_sha"
+          echo "Compose directory: $upstream_dir"
+          echo "Compose file: ops/supabase/lanes/latest-docker-compose.yml"
+          echo "Env template: ops/supabase/lanes/latest-docker.env"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
