@@ -10,8 +10,44 @@ done
 
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+ensure_writable_dir() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return 0
+  if [[ ! -d "$dir" ]]; then
+    if ! mkdir -p "$dir" 2>/dev/null; then
+      local parent
+      parent="$(dirname "$dir")"
+      if [[ -d "$parent" ]]; then
+        ensure_writable_dir "$parent" || return 1
+      fi
+      mkdir -p "$dir"
+    fi
+  fi
+  if [[ -w "$dir" && -x "$dir" ]]; then
+    return 0
+  fi
+  local uid gid
+  uid="$(id -u)"
+  gid="$(id -g)"
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo chown -R "$uid":"$gid" "$dir" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  if [[ -O "$dir" ]]; then
+    chmod -R u+rwX "$dir"
+  fi
+  if [[ ! -w "$dir" || ! -x "$dir" ]]; then
+    echo "warning: unable to regain write access to $dir" >&2
+    return 1
+  fi
+}
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
+ensure_writable_dir "$root"
+if [[ -n "${SUPABASE_STATE_DIR:-}" ]]; then
+  ensure_writable_dir "$SUPABASE_STATE_DIR"
+fi
 
 if [[ ! -f "$repo_envfile" ]]; then
   echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
@@ -48,61 +84,6 @@ psql_base=(
   -U "$PGUSER"
   -d "$PGDATABASE"
 )
-ensure_database_access() {
-  if "${psql_base[@]}" -tAc "select 1" >/dev/null 2>&1; then
-    return 0
-  fi
-  if [[ -z "${SUPABASE_SUPER_ROLE:-}" || -z "${SUPABASE_SUPER_PASSWORD:-}" ]]; then
-    echo "failed to connect to $PGDATABASE as $PGUSER and no superuser credentials available" >&2
-    return 1
-  fi
-  local original_password="$PGPASSWORD"
-  sql_ident() {
-    python3 - "$1" <<'PY'
-import sys
-name = sys.argv[1]
-print('"' + name.replace('"', '""') + '"')
-PY
-  }
-  sql_literal() {
-    python3 - "$1" <<'PY'
-import sys
-name = sys.argv[1]
-print("'" + name.replace("'", "''") + "'")
-PY
-  }
-  local super_psql_base=(
-    psql
-    -v
-    ON_ERROR_STOP=1
-    -h "$pg_host"
-    -p "$pg_host_port"
-    -U "$SUPABASE_SUPER_ROLE"
-    -d "${SUPABASE_SUPER_DB:-postgres}"
-  )
-  local db_ident
-  db_ident=$(sql_ident "$PGDATABASE")
-  local role_ident
-  role_ident=$(sql_ident "$PGUSER")
-  local db_literal
-  db_literal=$(sql_literal "$PGDATABASE")
-  export PGPASSWORD="$SUPABASE_SUPER_PASSWORD"
-  "${super_psql_base[@]}" <<SQL
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = ${db_literal}) THEN
-    EXECUTE 'CREATE DATABASE ${db_ident} OWNER ${role_ident}';
-  END IF;
-  EXECUTE 'ALTER DATABASE ${db_ident} OWNER TO ${role_ident}';
-  EXECUTE 'GRANT ALL PRIVILEGES ON DATABASE ${db_ident} TO ${role_ident}';
-  EXECUTE 'GRANT CONNECT ON DATABASE ${db_ident} TO ${role_ident}';
-END
-$$;
-SQL
-  export PGPASSWORD="$original_password"
-  "${psql_base[@]}" -tAc "select 1" >/dev/null 2>&1
-}
-ensure_database_access
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib
