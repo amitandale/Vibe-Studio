@@ -33,10 +33,20 @@ else
   trap 'rm -rf "$tmpdir"' EXIT
 
   echo "Downloading Supabase docker assets @ $supabase_ref"
-  git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
+  if ! git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"; then
+    echo "❌ Unable to clone supabase/supabase repository. Check network connectivity." >&2
+    exit 1
+  fi
+
   pushd "$tmpdir/supabase" >/dev/null
-  git fetch origin "$supabase_ref" --depth 1
+
+  if ! git fetch origin "$supabase_ref" --depth 1; then
+    echo "❌ Supabase ref '$supabase_ref' not found. Update ops/supabase/SUPABASE_DOCKER_REF to a valid tag or commit." >&2
+    exit 1
+  fi
+
   git checkout FETCH_HEAD
+  git sparse-checkout init --cone
   git sparse-checkout set docker
   commit_sha="$(git rev-parse HEAD)"
   popd >/dev/null

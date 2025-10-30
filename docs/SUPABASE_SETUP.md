@@ -51,7 +51,7 @@ truth for authentication data.
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Sync the pinned Supabase docker directory** so helpers can hydrate defaults straight from upstream and Compose can access every referenced asset:
+2. **Sync the pinned Supabase docker directory** so helpers can hydrate defaults straight from upstream and Compose can access every referenced asset. Ensure `ops/supabase/SUPABASE_DOCKER_REF` points to a real Supabase tag or commit (for example `1.25.04`) before running the helper:
    ```bash
    ./scripts/supabase/sync_docker_assets.sh
    ```

@@ -26,6 +26,7 @@ workflow runs.
 
 ```bash
 # Sync the pinned Supabase docker assets once per runner (or after bumping SUPABASE_DOCKER_REF)
+# Ensure ops/supabase/SUPABASE_DOCKER_REF references a real Supabase tag/commit (e.g. 1.25.04)
 ./scripts/supabase/sync_docker_assets.sh
 
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'

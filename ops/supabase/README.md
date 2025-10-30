@@ -20,7 +20,7 @@ Fetch the entire `docker/` directory from Supabase so Compose has access to ever
 scripts/supabase/sync_docker_assets.sh
 ```
 
-The pinned tag or commit lives in `ops/supabase/SUPABASE_DOCKER_REF`. Update that file and rerun the sync helper whenever you need to upgrade Supabase; commit the resulting changes (including the refreshed `latest-docker` directory) so CI and local workflows stay aligned.
+The pinned tag or commit lives in `ops/supabase/SUPABASE_DOCKER_REF`. Update that file and rerun the sync helper whenever you need to upgrade Supabase; commit the resulting changes (including the refreshed `latest-docker` directory) so CI and local workflows stay aligned. Make sure the ref corresponds to an actual tag or commit in the Supabase repository (for example `1.25.04`); the sync helper will exit early if the value is invalid.
 
 The tooling refuses to run if the directory (or the compose/env templates within it) is missing to avoid drifting from Supabase's published configuration.
 
