@@ -10,8 +10,122 @@ done
 
 lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+ensure_writable_dir() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return 0
+  if [[ ! -d "$dir" ]]; then
+    if ! mkdir -p "$dir" 2>/dev/null; then
+      local parent
+      parent="$(dirname "$dir")"
+      if [[ -d "$parent" ]]; then
+        ensure_writable_dir "$parent" || return 1
+      fi
+      mkdir -p "$dir"
+    fi
+  fi
+  if [[ -w "$dir" && -x "$dir" ]]; then
+    return 0
+  fi
+  local uid gid
+  uid="$(id -u)"
+  gid="$(id -g)"
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo chown -R "$uid":"$gid" "$dir" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  if [[ -O "$dir" ]]; then
+    chmod -R u+rwX "$dir"
+  fi
+  if [[ ! -w "$dir" || ! -x "$dir" ]]; then
+    echo "warning: unable to regain write access to $dir" >&2
+    return 1
+  fi
+}
+ensure_database_access() {
+  local super_role="$1"
+  local super_password="$2"
+  local lane_password="$3"
+
+  if [[ -z "$super_role" || -z "$super_password" ]]; then
+    echo "missing superuser credentials; ensure ${lane}.env and credentials.env expose ${lane_upper}_SUPER_ROLE and ${lane_upper}_SUPER_PASSWORD" >&2
+    exit 1
+  fi
+
+  local admin_psql_base=(
+    psql
+    -v
+    ON_ERROR_STOP=1
+    -h "$pg_host"
+    -p "$pg_host_port"
+    -U "$super_role"
+    -d postgres
+  )
+
+  if ! PGPASSWORD="$super_password" "${admin_psql_base[@]}" -tAc 'SELECT 1' >/dev/null 2>&1; then
+    echo "unable to authenticate as superuser role $super_role" >&2
+    exit 1
+  fi
+
+  PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v role="$PGUSER" -v password="$lane_password" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') THEN
+    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password');
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password');
+  END IF;
+END
+$$;
+SQL
+
+  local have_db
+  have_db=$(PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v db="$PGDATABASE" -tAc "SELECT 1 FROM pg_database WHERE datname = :'db'" || true)
+  if [[ "$have_db" != "1" ]]; then
+    PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v db="$PGDATABASE" -v role="$PGUSER" <<'SQL'
+SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'role')
+\gexec
+SQL
+  fi
+
+  PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v db="$PGDATABASE" -v role="$PGUSER" <<'SQL'
+SELECT format('ALTER DATABASE %I OWNER TO %I', :'db', :'role')
+\gexec
+SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'db', :'role')
+\gexec
+SQL
+
+  local admin_db_psql=(
+    psql
+    -v
+    ON_ERROR_STOP=1
+    -h "$pg_host"
+    -p "$pg_host_port"
+    -U "$super_role"
+    -d "$PGDATABASE"
+  )
+
+  PGPASSWORD="$super_password" "${admin_db_psql[@]}" -v role="$PGUSER" <<'SQL'
+SELECT format('ALTER SCHEMA public OWNER TO %I', :'role')
+\gexec
+SELECT format('GRANT ALL PRIVILEGES ON SCHEMA public TO %I', :'role')
+\gexec
+SELECT format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO %I', :'role')
+\gexec
+SELECT format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO %I', :'role')
+\gexec
+SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO %I', :'role')
+\gexec
+SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO %I', :'role')
+\gexec
+SQL
+}
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
+ensure_writable_dir "$root"
+if [[ -n "${SUPABASE_STATE_DIR:-}" ]]; then
+  ensure_writable_dir "$SUPABASE_STATE_DIR"
+fi
 
 if [[ ! -f "$repo_envfile" ]]; then
   echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane --pg-password <password>" >&2
@@ -35,8 +149,6 @@ if [[ -z "$pg_password" ]]; then
   echo "${pg_password_var} missing in $credentials_file; cannot compute connection string." >&2
   exit 1
 fi
-export PGPASSWORD="$pg_password"
-
 pg_host="${PGHOST:-127.0.0.1}"
 pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
 psql_base=(
@@ -48,6 +160,15 @@ psql_base=(
   -U "$PGUSER"
   -d "$PGDATABASE"
 )
+
+export PGPASSWORD="$pg_password"
+
+super_role_var="${lane_upper}_SUPER_ROLE"
+super_password_var="${lane_upper}_SUPER_PASSWORD"
+super_role="${!super_role_var:-${SUPABASE_SUPER_ROLE:-}}"
+super_password="${!super_password_var:-${SUPABASE_SUPER_PASSWORD:-}}"
+
+ensure_database_access "$super_role" "$super_password" "$pg_password"
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib
