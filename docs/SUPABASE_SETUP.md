@@ -26,14 +26,14 @@ Each Git branch class maps to its own long-lived Supabase lane. Every lane runs 
 
 ## 🔢 Port Allocation
 
-| Lane  | PGHOST_PORT | KONG_HTTP_PORT | EDGE_PORT |
-|-------|:-----------:|:--------------:|:---------:|
-| main  |     5433    |      8101      |    9901   |
-| work  |     5434    |      8102      |    9902   |
-| codex |     5435    |      8103      |    9903   |
+| Lane  | PGHOST_PORT / PGPORT | KONG_HTTP_PORT | EDGE_PORT |
+|-------|:--------------------:|:--------------:|:---------:|
+| main  |         5433         |      8101      |    9901   |
+| work  |         5434         |      8102      |    9902   |
+| codex |         5435         |      8103      |    9903   |
 
-Each container continues to listen on port `5432`; the new `PGHOST_PORT` variable controls the host-side binding that Docker
-publishes for lane-specific connectivity.
+Each container continues to listen on port `5432`; the lane env mirrors the published host binding in both `PGHOST_PORT` and
+`PGPORT` so local tooling consistently targets the exposed service.
 
 Volumes follow the pattern `supa-<lane>-db` and Compose project names default to `supa-<lane>`.
 
@@ -67,7 +67,7 @@ truth for authentication data.
      ```
      Supabase service versions track the upstream compose file you downloaded. To pin a particular release, fetch the compose and `.env` from the desired Supabase tag before running the helper.
    - To rotate passwords, edit `credentials.env` (or pass explicit `--pg-password/--pg-super-password` flags) and rerun the helper. The next deploy automatically injects the updated credentials into the database and Compose runtime.
-   - Restored clusters that keep a legacy superuser should update `credentials.env` (or pass overrides) with that account so the deploy workflow can recreate the primary `PGUSER` when it is missing:
+    - Restored clusters that keep a legacy superuser should update `credentials.env` (or pass overrides) with that account so the deploy workflow can recreate the primary `PGUSER`/`SUPABASE_SUPER_ROLE` when it is missing:
      ```bash
      ./scripts/supabase/provision_lane_env.sh codex \
        --pg-super-role supabase_admin \
@@ -77,8 +77,8 @@ truth for authentication data.
 ### Restore existing superusers
 
 When you reuse a Supabase volume that was initialized elsewhere, populate the fallback credentials with the existing
-superuser so the deploy workflow can recreate the lane-specific role (usually `postgres`) and reset its password automatically.
-The helper never alters `supabase_admin` once the role exists; it only connects with that account long enough to recreate the lane role when the `PGUSER` account cannot authenticate:
+superuser so the deploy workflow reconnects with that account and realigns container roles automatically. The helper
+validates the configured `PGUSER` superuser on every run and reapplies its password before migrations execute:
 
 ```bash
 ./scripts/supabase/provision_lane_env.sh <lane> \
@@ -126,7 +126,7 @@ stored roles using those credentials before migrations run, so the lane is heale
 - **Missing env file**: Run `./scripts/supabase/provision_lane_env.sh <lane>` on the runner. This regenerates `ops/supabase/lanes/<lane>.env` from the checked-in credentials.
 - **Weak password warning**: Update the password in `ops/supabase/lanes/credentials.env`, rerun the provisioning script, and redeploy.
 - **Compose failures**: Confirm Docker can pull the images referenced in `ops/supabase/lanes/latest-docker/docker-compose.yml`. If an upstream tag disappears, fetch a tagged release of the Supabase repository and rerun the provisioning helper so configuration files stay in sync.
-- **`role "postgres" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper never modifies the Supabase admin password, so the stored secret must match the database before re-running the deploy.
+- **`role "<pg-user>" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper expects the stored secrets to match the database before re-running the deploy.
 - **Kong not healthy**: Review logs via `docker compose --project-directory ops/supabase/lanes/latest-docker -f ops/supabase/lanes/latest-docker/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
 

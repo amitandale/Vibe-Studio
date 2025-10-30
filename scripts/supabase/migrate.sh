@@ -46,6 +46,8 @@ ensure_database_access() {
   local super_role="$1"
   local super_password="$2"
   local lane_password="$3"
+  local container_role="$4"
+  local container_password="$5"
 
   if [[ -z "$super_role" || -z "$super_password" ]]; then
     echo "missing superuser credentials; ensure ${lane}.env and credentials.env expose ${lane_upper}_SUPER_ROLE and ${lane_upper}_SUPER_PASSWORD" >&2
@@ -78,6 +80,20 @@ BEGIN
 END
 $$;
 SQL
+
+  if [[ -n "$container_role" && -n "$container_password" && "$container_role" != "$PGUSER" ]]; then
+    PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v role="$container_role" -v password="$container_password" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') THEN
+    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password');
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password');
+  END IF;
+END
+$$;
+SQL
+  fi
 
   local have_db
   have_db=$(PGPASSWORD="$super_password" "${admin_psql_base[@]}" -v db="$PGDATABASE" -tAc "SELECT 1 FROM pg_database WHERE datname = :'db'" || true)
@@ -140,17 +156,21 @@ fi
 # shellcheck disable=SC1090
 set -a; source "$repo_envfile"; set +a
 
-lane_upper="${lane^^}"
-# shellcheck disable=SC1090
-source "$credentials_file"
-pg_password_var="${lane_upper}_PG_PASSWORD"
-pg_password="${!pg_password_var:-}"
-if [[ -z "$pg_password" ]]; then
-  echo "${pg_password_var} missing in $credentials_file; cannot compute connection string." >&2
+if [[ -z "${PGPASSWORD:-}" ]]; then
+  echo "PGPASSWORD missing from $repo_envfile; regenerate the lane env before running migrations." >&2
   exit 1
 fi
+
+lane_role_password="$PGPASSWORD"
 pg_host="${PGHOST:-127.0.0.1}"
-pg_host_port="${PGHOST_PORT:-${PGPORT:-5432}}"
+if [[ -n "${PGPORT:-}" ]]; then
+  pg_host_port="$PGPORT"
+elif [[ -n "${PGHOST_PORT:-}" ]]; then
+  pg_host_port="$PGHOST_PORT"
+else
+  pg_host_port="5432"
+fi
+
 psql_base=(
   psql
   -v
@@ -161,14 +181,49 @@ psql_base=(
   -d "$PGDATABASE"
 )
 
-export PGPASSWORD="$pg_password"
+lane_upper="${lane^^}"
+# shellcheck disable=SC1090
+source "$credentials_file"
+
+pg_password_var="${lane_upper}_PG_PASSWORD"
+expected_container_password="${!pg_password_var:-}"
+if [[ -z "$expected_container_password" ]]; then
+  echo "${pg_password_var} missing in $credentials_file; cannot compute container credentials." >&2
+  exit 1
+fi
 
 super_role_var="${lane_upper}_SUPER_ROLE"
 super_password_var="${lane_upper}_SUPER_PASSWORD"
 super_role="${!super_role_var:-${SUPABASE_SUPER_ROLE:-}}"
 super_password="${!super_password_var:-${SUPABASE_SUPER_PASSWORD:-}}"
 
-ensure_database_access "$super_role" "$super_password" "$pg_password"
+if [[ -z "$super_role" || -z "$super_password" ]]; then
+  echo "${super_role_var}/${super_password_var} missing in $credentials_file; cannot authenticate as Supabase superuser." >&2
+  exit 1
+fi
+
+if [[ "${SUPABASE_SUPER_PASSWORD:-}" != "${super_password}" ]]; then
+  echo "Warning: SUPABASE_SUPER_PASSWORD in $repo_envfile differs from credentials.env; using canonical value." >&2
+fi
+
+if [[ "$PGUSER" != "$super_role" ]]; then
+  echo "PGUSER ('$PGUSER') differs from expected superuser '$super_role'; regenerate the lane env." >&2
+  exit 1
+fi
+
+if [[ "$lane_role_password" != "$super_password" ]]; then
+  echo "PGPASSWORD from $repo_envfile does not match ${super_password_var} in credentials.env." >&2
+  exit 1
+fi
+
+if [[ -n "${POSTGRES_PASSWORD:-}" && "$POSTGRES_PASSWORD" != "$expected_container_password" ]]; then
+  echo "POSTGRES_PASSWORD in $repo_envfile does not match ${pg_password_var}; regenerate the lane env." >&2
+  exit 1
+fi
+
+export PGPASSWORD="$lane_role_password"
+
+ensure_database_access "$super_role" "$super_password" "$lane_role_password" "${POSTGRES_USER:-}" "${POSTGRES_PASSWORD:-}"
 LOCK_KEY=$(python3 - <<'PY'
 import os
 import zlib

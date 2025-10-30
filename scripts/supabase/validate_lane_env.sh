@@ -83,10 +83,6 @@ if [[ -z "$super_password" ]]; then
   fail "${super_password_var} missing in credentials file." "Add the superuser password to ops/supabase/lanes/credentials.env."
 fi
 
-export PGPASSWORD="$pg_password"
-export SUPABASE_SUPER_ROLE="$super_role"
-export SUPABASE_SUPER_PASSWORD="$super_password"
-
 required_vars=(
   COMPOSE_PROJECT_NAME
   LANE
@@ -175,12 +171,20 @@ for numeric_var in POOLER_MAX_CLIENT_CONN POOLER_DB_POOL_SIZE POOLER_DEFAULT_POO
   assert_numeric "$numeric_var" 1 100000
 done
 
-if [[ "${PGPORT}" != "5432" ]]; then
-  echo "⚠️  PGPORT is '${PGPORT}', but containers should listen on 5432. Provision the lane env again to normalize ports." >&2
-fi
-
 if [[ "${POSTGRES_PORT}" != "5432" ]]; then
   echo "⚠️  POSTGRES_PORT is '${POSTGRES_PORT}', expected 5432 for Supabase Postgres." >&2
+fi
+
+if [[ "${PGPORT}" != "${PGHOST_PORT}" ]]; then
+  fail "PGPORT (${PGPORT}) must match PGHOST_PORT (${PGHOST_PORT})." "Regenerate the lane env so host port metadata stays consistent."
+fi
+
+if [[ "${PGUSER}" != "${SUPABASE_SUPER_ROLE}" ]]; then
+  fail "PGUSER ('${PGUSER}') must match SUPABASE_SUPER_ROLE ('${SUPABASE_SUPER_ROLE}')." "Provision the lane env again to sync credentials."
+fi
+
+if [[ "${PGPASSWORD}" != "${SUPABASE_SUPER_PASSWORD}" ]]; then
+  fail "PGPASSWORD does not match SUPABASE_SUPER_PASSWORD for lane '$lane'." "Regenerate the lane env so credentials stay aligned."
 fi
 
 if [[ ! "${VOL_NS}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then

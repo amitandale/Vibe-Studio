@@ -219,25 +219,32 @@ prepare_envfile() {
     exit 1
   fi
 
+  if [[ -z "$host_port" ]]; then
+    if [[ -n "$pg_port" ]]; then
+      host_port="$pg_port"
+    else
+      host_port="5432"
+    fi
+  fi
+
   if [[ -z "$pg_port" ]]; then
     pg_port="5432"
   fi
-  if [[ -z "$host_port" ]]; then
-    host_port="$pg_port"
-  fi
 
-  add_or_update_kv env_map key_order PGPORT "5432"
+  add_or_update_kv env_map key_order PGPORT "$host_port"
   add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  add_or_update_kv env_map key_order PGPASSWORD "$injected_pg_password"
+  local lane_role_password
+  lane_role_password="${env_map[PGPASSWORD]:-}"
+  if [[ -z "$lane_role_password" ]]; then
+    lane_role_password="$injected_super_password"
+  fi
+  add_or_update_kv env_map key_order PGPASSWORD "$lane_role_password"
   add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "$injected_super_role"
   add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
 
   if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
     add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"
-  fi
-  if [[ -n "${env_map[PGUSER]:-}" ]]; then
-    add_or_update_kv env_map key_order POSTGRES_USER "${env_map[PGUSER]}"
   fi
   add_or_update_kv env_map key_order POSTGRES_PASSWORD "$injected_pg_password"
   add_or_update_kv env_map key_order POSTGRES_HOST "db"
@@ -399,7 +406,7 @@ persist_lane_env_value() {
 
 resolve_compose_service_port() {
   local svc="$1"
-  local container_port="${2:-${PGPORT:-5432}}"
+  local container_port="${2:-${POSTGRES_PORT:-5432}}"
 
   local output
   output=$("${compose_cmd[@]}" port "$svc" "$container_port" 2>/dev/null || true)
@@ -428,7 +435,7 @@ sync_pg_host_port_with_compose() {
   if ! resolved_port=$(resolve_compose_service_port db); then
     {
       echo "⚠️  Unable to determine published Postgres port from docker compose for lane '$lane'."
-      echo "   Command: docker compose port db ${PGPORT:-5432}"
+      echo "   Command: docker compose port db ${POSTGRES_PORT:-5432}"
       echo "   Falling back to PGHOST_PORT=${pg_host_port} from env file."
     } >&2
     return 1
@@ -1193,7 +1200,7 @@ diagnose_pg_failure() {
 
   {
     echo "❌ [$context] Unable to connect to Postgres for Supabase lane '$lane'."
-    echo "   Host: ${local_pg_host}  Port: ${pg_host_port:-<unset>} (container: ${PGPORT:-<unset>})  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
+    echo "   Host: ${local_pg_host}  Port: ${pg_host_port:-<unset>} (container: ${POSTGRES_PORT:-<unset>})  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
     if [[ -n "$pg_probe_last_host_output" ]]; then
       echo "   Last host pg_isready exit code ${pg_probe_last_host_status:-?}:"
       printf '%s\n' "$pg_probe_last_host_output" | indent_lines '      '
@@ -1248,7 +1255,7 @@ status_env_snapshot() {
         echo "   Env file: $envfile"
       fi
     fi
-    echo "   Postgres host: ${PGHOST:-<unset>}  container port: ${PGPORT:-<unset>}  published port: ${PGHOST_PORT:-<unset>}"
+    echo "   Postgres host: ${PGHOST:-<unset>}  container port: ${POSTGRES_PORT:-<unset>}  published port: ${PGHOST_PORT:-<unset>}"
     echo "   Kong HTTP port: ${KONG_HTTP_PORT:-<unset>}"
     echo "   Edge runtime port: ${EDGE_PORT:-<unset>}"
     echo "   Edge env file: ${EDGE_ENV_FILE:-<unset>}"

@@ -76,11 +76,15 @@ for idx in "${!env_lines[@]}"; do
   esac
 done
 
-if [[ -z "$pg_port" ]]; then
-  pg_port="5432"
-fi
 if [[ -z "$host_port" ]]; then
-  host_port="$pg_port"
+  if [[ -n "$pg_port" ]]; then
+    host_port="$pg_port"
+  else
+    host_port="5432"
+  fi
+fi
+if [[ -z "$pg_port" ]]; then
+  pg_port="$host_port"
 fi
 
 tmp_env="$(mktemp)"
@@ -89,7 +93,7 @@ cleanup_files+=("$tmp_env")
   for line in "${env_lines[@]}"; do
     case "$line" in
       PGPORT=*)
-        printf 'PGPORT=5432\n'
+        printf 'PGPORT=%s\n' "$pg_port"
         ;;
       PGHOST_PORT=*)
         printf 'PGHOST_PORT=%s\n' "$host_port"
@@ -101,7 +105,7 @@ cleanup_files+=("$tmp_env")
         ;;
     esac
   done
-  printf 'PGPASSWORD=%s\n' "$pg_password"
+  printf 'PGPASSWORD=%s\n' "$super_password"
   printf 'SUPABASE_SUPER_ROLE=%s\n' "$super_role"
   printf 'SUPABASE_SUPER_PASSWORD=%s\n' "$super_password"
 } >"$tmp_env"
