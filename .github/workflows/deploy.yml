@@ -171,9 +171,6 @@ jobs:
           compose_dir="ops/supabase/lanes/latest-docker"
           compose_file="ops/supabase/lanes/latest-docker-compose.yml"
 
-          override_file="ops/supabase/lanes/docker-compose.override.yml"
-          lane_override="ops/supabase/lanes/docker-compose.${LANE}.yml"
-
           echo "ℹ️  Refreshing Supabase images"
           echo "   Lane: $LANE"
           echo "   Env file: $(realpath "$envfile")"
@@ -185,16 +182,6 @@ jobs:
             --env-file "$envfile"
             -f "$compose_file"
           )
-
-          if [[ -f "$override_file" ]]; then
-            echo "   Compose override: $(realpath "$override_file")"
-            compose_args+=(-f "$override_file")
-          fi
-
-          if [[ -f "$lane_override" ]]; then
-            echo "   Compose override: $(realpath "$lane_override")"
-            compose_args+=(-f "$lane_override")
-          fi
 
           if [[ ! -f "$envfile" ]]; then
             echo "❌ Lane env file missing: $envfile" >&2

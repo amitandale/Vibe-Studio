@@ -40,17 +40,7 @@ if [[ ! -f "$official_env_template" ]]; then
 fi
 
 compose="$official_compose"
-compose_overrides_dir="$root/ops/supabase/lanes"
-global_compose_override="$compose_overrides_dir/docker-compose.override.yml"
-lane_compose_override="$compose_overrides_dir/docker-compose.${lane}.yml"
-
 declare -a compose_files=("$compose")
-if [[ -f "$global_compose_override" ]]; then
-  compose_files+=("$global_compose_override")
-fi
-if [[ -f "$lane_compose_override" ]]; then
-  compose_files+=("$lane_compose_override")
-fi
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 
@@ -274,12 +264,6 @@ fi
 
 echo "ℹ️  Prepared Supabase lane env file '$envfile' (source: $envfile_source, credentials: $credentials_file)" >&2
 echo "ℹ️  Using Supabase compose definition from $official_compose" >&2
-if (( ${#compose_files[@]} > 1 )); then
-  echo "ℹ️  Applying compose overrides:" >&2
-  for compose_override in "${compose_files[@]:1}"; do
-    echo "   - $compose_override" >&2
-  done
-fi
 echo "ℹ️  Compose project directory: $official_docker_dir" >&2
 echo "ℹ️  Applying upstream Supabase env defaults from $official_env_template" >&2
 
