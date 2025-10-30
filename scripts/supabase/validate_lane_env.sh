@@ -7,7 +7,10 @@ usage() {
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" || $# -eq 0 ]]; then
   usage
-  exit $(( $# -eq 0 ? 1 : 0 ))
+  if [[ $# -eq 0 ]]; then
+    exit 1
+  fi
+  exit 0
 fi
 
 lane="$1"
@@ -214,7 +217,11 @@ if url.scheme not in ("postgresql", "postgres"):
 username = unquote(url.username or "")
 password = unquote(url.password or "")
 host = url.hostname or ""
-port = url.port
+try:
+    port = url.port
+except ValueError as exc:
+    print(f"invalid port: {exc}", file=sys.stderr)
+    sys.exit(1)
 database = unquote((url.path or "/")[1:])
 
 print(username)
@@ -225,7 +232,13 @@ print(database)
 PY
 }
 
-mapfile -t db_url_parts < <(parse_db_url) || fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+if ! mapfile -t db_url_parts < <(parse_db_url); then
+  fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+fi
+
+if [[ ${#db_url_parts[@]} -ne 5 ]]; then
+  fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+fi
 
 db_url_user="${db_url_parts[0]}"
 db_url_password="${db_url_parts[1]}"
