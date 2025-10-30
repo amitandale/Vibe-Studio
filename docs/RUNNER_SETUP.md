@@ -27,7 +27,7 @@ openssl version
 ## 🧱 Supabase Infrastructure
 
 - [ ] Repository checked out to deployment directory
-- [ ] Supabase docker assets downloaded to `ops/supabase/lanes/latest-docker/` (via sparse checkout)
+- [ ] Supabase docker assets synced with `./scripts/supabase/sync_docker_assets.sh` (pinned ref recorded in `ops/supabase/SUPABASE_DOCKER_REF`)
 - [ ] Lane credentials in `ops/supabase/lanes/credentials.env` reviewed/updated for this runner
 - [ ] Lane env files generated via `scripts/supabase/provision_lane_env.sh`
 - [ ] Supabase admin password recorded separately from lane `PGPASSWORD`

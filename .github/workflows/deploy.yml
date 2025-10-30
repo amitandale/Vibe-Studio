@@ -53,37 +53,29 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
-      - name: Fetch official Supabase docker assets
+      - name: Sync pinned Supabase docker assets
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
           set -euo pipefail
 
-          upstream_dir="ops/supabase/lanes/latest-docker"
-          tmp_dir="$(mktemp -d)"
+          scripts/supabase/sync_docker_assets.sh
 
-          echo "Cloning Supabase docker assets via sparse checkout"
-          git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmp_dir/supabase"
-          pushd "$tmp_dir/supabase" >/dev/null
-          git sparse-checkout set docker
-          git rev-parse HEAD > "$OLDPWD/supabase_commit.txt"
-          popd >/dev/null
+          ref_file="ops/supabase/SUPABASE_DOCKER_REF"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          env_template="ops/supabase/lanes/latest-docker.env"
 
-          rm -rf "$upstream_dir"
-          mkdir -p "$upstream_dir"
-          cp -a "$tmp_dir/supabase/docker/." "$upstream_dir/"
+          if [[ -f "$compose_dir/.supabase_commit" ]]; then
+            commit_sha="$(<"$compose_dir/.supabase_commit")"
+            echo "Supabase docker assets pinned to commit $commit_sha (ref $(<"$ref_file"))"
+          else
+            echo "⚠️  Supabase docker assets missing commit marker; ensure sync script copied files" >&2
+          fi
 
-          cp "$upstream_dir/docker-compose.yml" ops/supabase/lanes/latest-docker-compose.yml
-          cp "$upstream_dir/.env.example" ops/supabase/lanes/latest-docker.env
-
-          commit_sha="$(cat supabase_commit.txt)"
-          rm -f supabase_commit.txt
-          rm -rf "$tmp_dir"
-
-          echo "Fetched Supabase docker assets at commit $commit_sha"
-          echo "Compose directory: $upstream_dir"
-          echo "Compose file: ops/supabase/lanes/latest-docker-compose.yml"
-          echo "Env template: ops/supabase/lanes/latest-docker.env"
+          echo "Compose directory: $(realpath "$compose_dir")"
+          echo "Compose file: $(realpath "$compose_file")"
+          echo "Env template: $(realpath "$env_template")"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
