@@ -29,6 +29,22 @@ jobs:
             echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           fi
 
+      - name: Repair lane workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repair_tree() {
+            local path="$1"
+            if sudo test -d "$path"; then
+              echo "ℹ️  Repairing workspace ownership for $path"
+              sudo chown -R "$(id -u)":"$(id -g)" "$path"
+            fi
+          }
+
+          repair_tree "${{ github.workspace }}"
+          repair_tree "${{ steps.vars.outputs.deploy_dir }}"
+
       - name: Create deployment directory
         run: mkdir -p ${{ steps.vars.outputs.deploy_dir }}
 
@@ -37,37 +53,29 @@ jobs:
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
 
-      - name: Fetch official Supabase docker assets
+      - name: Sync pinned Supabase docker assets
         shell: bash
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
         run: |
           set -euo pipefail
 
-          upstream_dir="ops/supabase/lanes/latest-docker"
-          tmp_dir="$(mktemp -d)"
+          scripts/supabase/sync_docker_assets.sh
 
-          echo "Cloning Supabase docker assets via sparse checkout"
-          git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmp_dir/supabase"
-          pushd "$tmp_dir/supabase" >/dev/null
-          git sparse-checkout set docker
-          git rev-parse HEAD > "$OLDPWD/supabase_commit.txt"
-          popd >/dev/null
+          ref_file="ops/supabase/SUPABASE_DOCKER_REF"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          env_template="ops/supabase/lanes/latest-docker.env"
 
-          rm -rf "$upstream_dir"
-          mkdir -p "$upstream_dir"
-          cp -a "$tmp_dir/supabase/docker/." "$upstream_dir/"
+          if [[ -f "$compose_dir/.supabase_commit" ]]; then
+            commit_sha="$(<"$compose_dir/.supabase_commit")"
+            echo "Supabase docker assets pinned to commit $commit_sha (ref $(<"$ref_file"))"
+          else
+            echo "⚠️  Supabase docker assets missing commit marker; ensure sync script copied files" >&2
+          fi
 
-          cp "$upstream_dir/docker-compose.yml" ops/supabase/lanes/latest-docker-compose.yml
-          cp "$upstream_dir/.env.example" ops/supabase/lanes/latest-docker.env
-
-          commit_sha="$(cat supabase_commit.txt)"
-          rm -f supabase_commit.txt
-          rm -rf "$tmp_dir"
-
-          echo "Fetched Supabase docker assets at commit $commit_sha"
-          echo "Compose directory: $upstream_dir"
-          echo "Compose file: ops/supabase/lanes/latest-docker-compose.yml"
-          echo "Env template: ops/supabase/lanes/latest-docker.env"
+          echo "Compose directory: $(realpath "$compose_dir")"
+          echo "Compose file: $(realpath "$compose_file")"
+          echo "Env template: $(realpath "$env_template")"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -161,18 +169,35 @@ jobs:
           echo "   Compose directory: $(realpath "$compose_dir")"
           echo "   Compose file: $(realpath "$compose_file")"
 
-          docker compose \
-            --project-directory "$compose_dir" \
-            --env-file "$envfile" \
-            -f "$compose_file" \
-            pull
+          compose_args=(
+            --project-directory "$compose_dir"
+            --env-file "$envfile"
+            -f "$compose_file"
+          )
+
+          if [[ ! -f "$envfile" ]]; then
+            echo "❌ Lane env file missing: $envfile" >&2
+            exit 1
+          fi
+
+          if [[ ! -d "$compose_dir" ]]; then
+            echo "❌ Supabase compose directory missing: $compose_dir" >&2
+            exit 1
+          fi
+
+          if [[ ! -f "$compose_file" ]]; then
+            echo "❌ Supabase compose definition missing: $compose_file" >&2
+            exit 1
+          fi
+
+          echo "ℹ️  Aligning images with $(basename "$compose_file")"
+          docker compose "${compose_args[@]}" pull
 
           echo "ℹ️  Supabase images after pull"
-          docker compose \
-            --project-directory "$compose_dir" \
-            --env-file "$envfile" \
-            -f "$compose_file" \
-            images
+          docker compose "${compose_args[@]}" images
+
+          echo "ℹ️  Images referenced by compose definition"
+          docker compose "${compose_args[@]}" config --images
 
       - name: Capture Supabase lane state
         id: supabase_state
@@ -210,8 +235,7 @@ jobs:
             echo "running=true" >> "$GITHUB_OUTPUT"
           else
             echo "running=false" >> "$GITHUB_OUTPUT"
-            echo "🚨 Supabase lane status check failed for lane '$LANE'" >&2
-            exit "$status"
+            echo "⚠️  Supabase lane status check returned exit code $status for lane '$LANE'; continuing with phased redeploy." >&2
           fi
 
       - name: Stop lane services and bring DB up
@@ -229,6 +253,15 @@ jobs:
           echo "ℹ️  Starting Postgres-only mode for migrations"
           scripts/supabase/lane.sh "$LANE" db-only
           scripts/supabase/lane.sh "$LANE" db-health
+
+      - name: Validate Supabase db-only services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+          LANE_STATUS_REQUIRED_SERVICES: "db vector"
+        run: |
+          echo "ℹ️  Validating db-only Supabase services for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
 
       - name: Apply DB migrations (transactional + advisory lock)
         working-directory: ${{ steps.vars.outputs.deploy_dir }}
@@ -267,6 +300,32 @@ jobs:
         env:
           LANE: ${{ steps.lane.outputs.lane }}
         run: scripts/supabase/edge_deploy.sh "$LANE"
+
+      - name: Validate Supabase full stack services
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          echo "ℹ️  Validating full Supabase stack for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
+
+      - name: Normalize Supabase workspace permissions
+        if: always()
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          set -euo pipefail
+
+          lane_root="$(pwd)"
+          state_dir="${lane_root}/../.supabase-state"
+
+          if [[ -d "${lane_root}/ops/supabase/lanes" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "${lane_root}/ops/supabase/lanes"
+          fi
+
+          if [[ -d "$state_dir" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "$state_dir"
+          fi
 
       - name: Use Node.js
         uses: actions/setup-node@v4

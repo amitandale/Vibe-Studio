@@ -51,20 +51,12 @@ truth for authentication data.
 ## 🚀 Initial Setup Steps
 
 1. **Clone the repository onto the runner** (or reuse the deployment checkout).
-2. **Download the official Supabase docker directory** so helpers can hydrate defaults straight from upstream and Compose can access every referenced asset:
+2. **Sync the pinned Supabase docker directory** so helpers can hydrate defaults straight from upstream and Compose can access every referenced asset. Ensure `ops/supabase/SUPABASE_DOCKER_REF` points to a real Supabase tag or commit (for example `1.25.04`) before running the helper:
    ```bash
-   mkdir -p ops/supabase/lanes
-   tmpdir=$(mktemp -d)
-   git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
-   git -C "$tmpdir/supabase" sparse-checkout set docker
-   rm -rf ops/supabase/lanes/latest-docker
-   cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
-   cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
-   cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
-   rm -rf "$tmpdir"
+   ./scripts/supabase/sync_docker_assets.sh
    ```
-   The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the Supabase repository.
-   During deploys the workflow automatically refreshes the referenced images with `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` before services start, so keeping this directory up to date is enough to track upstream releases.
+   The reference tag or commit is stored in `ops/supabase/SUPABASE_DOCKER_REF`. When you need to upgrade Supabase, update that file to the desired tag, rerun the sync script, review the resulting diff (including `ops/supabase/lanes/latest-docker`), and commit the changes. The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the pinned Supabase release.
+   During deploys the workflow automatically refreshes the referenced images with `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` before services start, so keeping the synced directory up to date with the pinned release is enough to track upstream updates.
 3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
    - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:

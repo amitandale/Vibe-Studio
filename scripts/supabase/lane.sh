@@ -40,6 +40,7 @@ if [[ ! -f "$official_env_template" ]]; then
 fi
 
 compose="$official_compose"
+declare -a compose_files=("$compose")
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 
@@ -331,7 +332,158 @@ source_lane_env "$envfile"
 # The deploy workflow runs `docker compose pull` using the same compose directory and
 # lane env file immediately before invoking this helper, so all commands below assume
 # Supabase images are already refreshed to match the upstream compose definition.
-compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$envfile" -f "$compose")
+compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$envfile")
+for compose_file_path in "${compose_files[@]}"; do
+  compose_cmd+=(-f "$compose_file_path")
+done
+
+declare -a compose_services_list=()
+compose_services_loaded=0
+
+persist_lane_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+
+  if [[ -z "$file" || -z "$key" ]]; then
+    return 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+
+  local tmp updated=0
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+      printf '%s\n' "$line" >>"$tmp"
+      continue
+    fi
+
+    local working="$line"
+    local leading="${working%%[![:space:]]*}"
+    working="${working#"$leading"}"
+
+    local prefix="$leading"
+    if [[ "$working" == export* ]]; then
+      working="${working#export}"
+      working="${working# }"
+      prefix+="export "
+    fi
+
+    if [[ "$working" != *"="* ]]; then
+      printf '%s\n' "$line" >>"$tmp"
+      continue
+    fi
+
+    local existing_key="${working%%=*}"
+    if [[ "$existing_key" == "$key" ]]; then
+      printf '%s%s=%s\n' "$prefix" "$key" "$value" >>"$tmp"
+      updated=1
+    else
+      printf '%s\n' "$line" >>"$tmp"
+    fi
+  done <"$file"
+
+  if (( ! updated )); then
+    printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  fi
+
+  if ! chmod --reference "$file" "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp"
+  fi
+
+  mv "$tmp" "$file"
+}
+
+resolve_compose_service_port() {
+  local svc="$1"
+  local container_port="${2:-${PGPORT:-5432}}"
+
+  local output
+  output=$("${compose_cmd[@]}" port "$svc" "$container_port" 2>/dev/null || true)
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+
+  local first_line
+  first_line="${output%%$'\n'*}"
+  first_line="${first_line//$'\r'/}"
+  if [[ -z "$first_line" ]]; then
+    return 1
+  fi
+
+  local port="${first_line##*:}"
+  port="${port//[[:space:]]/}"
+  if [[ -z "$port" ]]; then
+    return 1
+  fi
+
+  echo "$port"
+}
+
+sync_pg_host_port_with_compose() {
+  local resolved_port
+  if ! resolved_port=$(resolve_compose_service_port db); then
+    {
+      echo "⚠️  Unable to determine published Postgres port from docker compose for lane '$lane'."
+      echo "   Command: docker compose port db ${PGPORT:-5432}"
+      echo "   Falling back to PGHOST_PORT=${pg_host_port} from env file."
+    } >&2
+    return 1
+  fi
+
+  if [[ "$resolved_port" == "0" ]]; then
+    {
+      echo "⚠️  docker compose reported a published Postgres port of 0 for lane '$lane'."
+      echo "   Keeping existing PGHOST_PORT=$pg_host_port from $repo_envfile."
+    } >&2
+    return 1
+  fi
+
+  if [[ "$resolved_port" != "$pg_host_port" ]]; then
+    {
+      echo "ℹ️  Detected published Postgres port $resolved_port (was $pg_host_port); updating lane environment."
+    } >&2
+    pg_host_port="$resolved_port"
+    export PGHOST_PORT="$pg_host_port"
+    persist_lane_env_value "$envfile" PGHOST_PORT "$pg_host_port"
+  fi
+}
+
+populate_compose_services() {
+  if (( compose_services_loaded )); then
+    return
+  fi
+
+  local output
+  if output=$("${compose_cmd[@]}" config --services 2>/dev/null); then
+    if [[ -n "${output}" ]]; then
+      mapfile -t compose_services_list <<<"$output"
+    else
+      compose_services_list=()
+    fi
+  else
+    compose_services_list=()
+  fi
+
+  compose_services_loaded=1
+}
+
+compose_has_service() {
+  local target="$1"
+  populate_compose_services
+
+  local svc
+  for svc in "${compose_services_list[@]}"; do
+    if [[ "$svc" == "$target" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 run_compose_checked() {
   local context="$1"
@@ -1198,7 +1350,12 @@ case "$cmd" in
     run_compose_checked "down" down
     ;;
   db-only)
-    run_compose_checked "up -d db" up -d db
+    declare -a db_phase_services=(db)
+    if compose_has_service vector; then
+      db_phase_services+=(vector)
+    fi
+    run_compose_checked "up -d ${db_phase_services[*]}" up -d "${db_phase_services[@]}"
+    sync_pg_host_port_with_compose || true
     ;;
   db-health)
     if ! wait_for_pg; then
@@ -1226,6 +1383,24 @@ case "$cmd" in
     curl -fsS "http://127.0.0.1:${KONG_HTTP_PORT}/" >/dev/null
     ;;
   status)
+    declare -a required_services=()
+    if [[ -n "${LANE_STATUS_REQUIRED_SERVICES:-}" ]]; then
+      old_ifs="$IFS"
+      IFS=', '
+      read -r -a required_services <<<"${LANE_STATUS_REQUIRED_SERVICES//,/ }"
+      IFS="$old_ifs"
+      filtered_services=()
+      for svc in "${required_services[@]}"; do
+        if [[ -n "$svc" ]]; then
+          filtered_services+=("$svc")
+        fi
+      done
+      required_services=("${filtered_services[@]}")
+    fi
+    if (( ${#required_services[@]} == 0 )); then
+      required_services=(db kong)
+    fi
+
     if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
       {
         echo "❌ Supabase lane status check failed to query docker compose state for lane '$lane'."
@@ -1311,7 +1486,6 @@ case "$cmd" in
             exit 1
           fi
 
-          declare -a required_services=(db kong)
           declare -a missing_services=()
           declare -a inactive_services=()
           declare -A service_state_map=()
@@ -1444,7 +1618,7 @@ case "$cmd" in
     fi
     ps_output=$("${compose_cmd[@]}" ps 2>/dev/null || true)
     missing_services=()
-    for svc in db kong; do
+    for svc in "${required_services[@]}"; do
       if ! grep -qiE "\b${svc}\b.*(up|running)" <<<"$ps_output"; then
         missing_services+=("$svc")
       fi
@@ -1474,8 +1648,9 @@ case "$cmd" in
       diag_targets[$svc]=1
     done
     if (( ${#diag_targets[@]} == 0 )); then
-      diag_targets[db]=1
-      diag_targets[kong]=1
+      for svc in "${required_services[@]}"; do
+        diag_targets[$svc]=1
+      done
     fi
 
     for svc in "${!diag_targets[@]}"; do

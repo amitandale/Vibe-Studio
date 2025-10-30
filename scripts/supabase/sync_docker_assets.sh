@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "❌ python3 is required to patch Supabase docker assets." >&2
+  exit 1
+fi
+
+root="$(git rev-parse --show-toplevel)"
+ref_file="$root/ops/supabase/SUPABASE_DOCKER_REF"
+official_dir="$root/ops/supabase/lanes/latest-docker"
+compose_copy="$root/ops/supabase/lanes/latest-docker-compose.yml"
+env_copy="$root/ops/supabase/lanes/latest-docker.env"
+marker_file="$official_dir/.supabase_ref"
+commit_file="$official_dir/.supabase_commit"
+
+if [[ ! -f "$ref_file" ]]; then
+  echo "❌ Missing Supabase reference file: $ref_file" >&2
+  exit 1
+fi
+
+supabase_ref="$(<"$ref_file")"
+if [[ -z "$supabase_ref" ]]; then
+  echo "❌ Supabase reference file is empty: $ref_file" >&2
+  exit 1
+fi
+
+if [[ -f "$marker_file" ]]; then
+  current_ref="$(<"$marker_file")"
+else
+  current_ref=""
+fi
+
+patch_db_port_mapping() {
+  local compose_file="$1"
+  if [[ ! -f "$compose_file" ]]; then
+    echo "⚠️  Supabase compose file missing at $compose_file; skipped port patch." >&2
+    return
+  fi
+
+  python3 - "$compose_file" <<'PY'
+import sys
+from pathlib import Path
+
+compose_path = Path(sys.argv[1])
+lines = compose_path.read_text().splitlines()
+
+target_mapping = '      - "${PGHOST_PORT}:5432"'
+ports_line = '    ports:'
+health_block = [
+    '    healthcheck:',
+    '      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]',
+    '      interval: 10s',
+    '      timeout: 10s',
+    '      retries: 12',
+    '      start_period: 30s',
+]
+
+db_start = None
+for idx, line in enumerate(lines):
+    if line.startswith('  db:'):
+        db_start = idx
+        break
+
+if db_start is None:
+    print('⚠️  Unable to locate db service in docker-compose.yml; skipped port patch.', file=sys.stderr)
+    sys.exit(0)
+
+def find_block_end(start_index: int) -> int:
+    block_end = start_index + 1
+    while block_end < len(lines):
+        line = lines[block_end]
+        if line.startswith('  ') and not line.startswith('    '):
+            break
+        block_end += 1
+    return block_end
+
+block_end = find_block_end(db_start)
+
+ports_index = None
+last_port_line = None
+ports_present = False
+
+idx = db_start + 1
+while idx < block_end:
+    stripped = lines[idx].strip()
+    if stripped.startswith('ports:'):
+        ports_index = idx
+        j = idx + 1
+        while j < block_end and lines[j].strip().startswith('-'):
+            if 'PGHOST_PORT' in lines[j] and lines[j].strip().endswith(':5432"'):
+                ports_present = True
+            last_port_line = j
+            j += 1
+        if last_port_line is None:
+            last_port_line = idx
+        break
+    idx += 1
+
+changed = False
+
+if ports_index is None:
+    insert_at = db_start + 1
+    while insert_at < block_end and (lines[insert_at].strip() == '' or lines[insert_at].lstrip().startswith('#')):
+        insert_at += 1
+    lines.insert(insert_at, ports_line)
+    lines.insert(insert_at + 1, target_mapping)
+    last_port_line = insert_at + 1
+    changed = True
+else:
+    if not ports_present:
+        insert_at = last_port_line + 1 if last_port_line is not None else ports_index + 1
+        lines.insert(insert_at, target_mapping)
+        last_port_line = insert_at
+        changed = True
+
+block_end = find_block_end(db_start)
+
+health_start = None
+for idx in range(db_start + 1, block_end):
+    if lines[idx].startswith('    healthcheck:'):
+        health_start = idx
+        break
+
+if health_start is None:
+    insert_at = (last_port_line + 1) if last_port_line is not None else (db_start + 1)
+    lines[insert_at:insert_at] = health_block
+    changed = True
+else:
+    end = health_start + 1
+    while end < block_end and (lines[end].startswith('      ') or lines[end].strip() == ''):
+        end += 1
+    existing = lines[health_start:end]
+    if existing != health_block:
+        lines[health_start:end] = health_block
+        changed = True
+
+if changed:
+    compose_path.write_text('\n'.join(lines) + '\n')
+    print('Updated Supabase db service compose configuration.')
+else:
+    print('Supabase db service compose configuration already matches expected port and healthcheck settings.')
+PY
+}
+
+if [[ -n "$current_ref" && "$current_ref" == "$supabase_ref" && -d "$official_dir" && -f "$commit_file" ]]; then
+  echo "Supabase docker assets already synced at $supabase_ref"
+else
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  echo "Downloading Supabase docker assets @ $supabase_ref"
+  if ! git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"; then
+    echo "❌ Unable to clone supabase/supabase repository. Check network connectivity." >&2
+    exit 1
+  fi
+
+  pushd "$tmpdir/supabase" >/dev/null
+
+  if ! git fetch origin "$supabase_ref" --depth 1; then
+    echo "❌ Supabase ref '$supabase_ref' not found. Update ops/supabase/SUPABASE_DOCKER_REF to a valid tag or commit." >&2
+    exit 1
+  fi
+
+  git checkout FETCH_HEAD
+  git sparse-checkout init --cone
+  git sparse-checkout set docker
+  commit_sha="$(git rev-parse HEAD)"
+  popd >/dev/null
+
+  rm -rf "$official_dir"
+  mkdir -p "$official_dir"
+  cp -a "$tmpdir/supabase/docker/." "$official_dir/"
+
+  echo "$supabase_ref" > "$marker_file"
+  echo "$commit_sha" > "$commit_file"
+
+  rm -rf "$tmpdir"
+  trap - EXIT
+
+  echo "Synced Supabase docker assets at commit $commit_sha"
+fi
+
+patch_db_port_mapping "$official_dir/docker-compose.yml"
+
+if [[ -f "$official_dir/docker-compose.yml" ]]; then
+  cp "$official_dir/docker-compose.yml" "$compose_copy"
+fi
+
+if [[ -f "$official_dir/.env.example" ]]; then
+  cp "$official_dir/.env.example" "$env_copy"
+fi
+
+if [[ -f "$commit_file" ]]; then
+  printf '%s (%s)\n' "$supabase_ref" "$(<"$commit_file")"
+else
+  printf '%s\n' "$supabase_ref"
+fi

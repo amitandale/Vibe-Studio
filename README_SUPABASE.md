@@ -25,16 +25,9 @@ workflow runs.
    values with the real configuration before running the provisioning helper:
 
 ```bash
-# Fetch Supabase's docker directory (compose + referenced assets) once per runner
-mkdir -p ops/supabase/lanes
-tmpdir=$(mktemp -d)
-git clone --filter=blob:none --sparse https://github.com/supabase/supabase.git "$tmpdir/supabase"
-git -C "$tmpdir/supabase" sparse-checkout set docker
-rm -rf ops/supabase/lanes/latest-docker
-cp -a "$tmpdir/supabase/docker" ops/supabase/lanes/latest-docker
-cp ops/supabase/lanes/latest-docker/docker-compose.yml ops/supabase/lanes/latest-docker-compose.yml
-cp ops/supabase/lanes/latest-docker/.env.example ops/supabase/lanes/latest-docker.env
-rm -rf "$tmpdir"
+# Sync the pinned Supabase docker assets once per runner (or after bumping SUPABASE_DOCKER_REF)
+# Ensure ops/supabase/SUPABASE_DOCKER_REF references a real Supabase tag/commit (e.g. 1.25.04)
+./scripts/supabase/sync_docker_assets.sh
 
 ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
 ./scripts/supabase/provision_lane_env.sh work --pg-super-role supabase_admin --pg-super-password '<supabase-admin-password>'
