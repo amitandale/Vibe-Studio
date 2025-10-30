@@ -47,6 +47,14 @@ lines = compose_path.read_text().splitlines()
 
 target_mapping = '      - "${PGHOST_PORT}:5432"'
 ports_line = '    ports:'
+health_block = [
+    '    healthcheck:',
+    '      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]',
+    '      interval: 10s',
+    '      timeout: 10s',
+    '      retries: 12',
+    '      start_period: 30s',
+]
 
 db_start = None
 for idx, line in enumerate(lines):
@@ -58,25 +66,38 @@ if db_start is None:
     print('⚠️  Unable to locate db service in docker-compose.yml; skipped port patch.', file=sys.stderr)
     sys.exit(0)
 
-block_end = db_start + 1
-while block_end < len(lines):
-    line = lines[block_end]
-    if line.startswith('  ') and not line.startswith('    '):
-        break
-    stripped = line.strip()
-    if 'PGHOST_PORT' in stripped and stripped.endswith(':5432"'):
-        print('Supabase docker-compose already includes PGHOST_PORT mapping for db service.')
-        sys.exit(0)
-    block_end += 1
+def find_block_end(start_index: int) -> int:
+    block_end = start_index + 1
+    while block_end < len(lines):
+        line = lines[block_end]
+        if line.startswith('  ') and not line.startswith('    '):
+            break
+        block_end += 1
+    return block_end
+
+block_end = find_block_end(db_start)
 
 ports_index = None
-for idx in range(db_start + 1, block_end):
+last_port_line = None
+ports_present = False
+
+idx = db_start + 1
+while idx < block_end:
     stripped = lines[idx].strip()
-    if stripped.startswith('#') or stripped == '':
-        continue
     if stripped.startswith('ports:'):
         ports_index = idx
+        j = idx + 1
+        while j < block_end and lines[j].strip().startswith('-'):
+            if 'PGHOST_PORT' in lines[j] and lines[j].strip().endswith(':5432"'):
+                ports_present = True
+            last_port_line = j
+            j += 1
+        if last_port_line is None:
+            last_port_line = idx
         break
+    idx += 1
+
+changed = False
 
 if ports_index is None:
     insert_at = db_start + 1
@@ -84,18 +105,41 @@ if ports_index is None:
         insert_at += 1
     lines.insert(insert_at, ports_line)
     lines.insert(insert_at + 1, target_mapping)
+    last_port_line = insert_at + 1
+    changed = True
 else:
-    insert_at = ports_index + 1
-    while insert_at < block_end and lines[insert_at].strip().startswith('- '):
-        stripped = lines[insert_at].strip()
-        if 'PGHOST_PORT' in stripped and stripped.endswith(':5432"'):
-            print('Supabase docker-compose already includes PGHOST_PORT mapping for db service.')
-            sys.exit(0)
-        insert_at += 1
-    lines.insert(insert_at, target_mapping)
+    if not ports_present:
+        insert_at = last_port_line + 1 if last_port_line is not None else ports_index + 1
+        lines.insert(insert_at, target_mapping)
+        last_port_line = insert_at
+        changed = True
 
-compose_path.write_text('\n'.join(lines) + '\n')
-print('Added PGHOST_PORT mapping to Supabase db service.')
+block_end = find_block_end(db_start)
+
+health_start = None
+for idx in range(db_start + 1, block_end):
+    if lines[idx].startswith('    healthcheck:'):
+        health_start = idx
+        break
+
+if health_start is None:
+    insert_at = (last_port_line + 1) if last_port_line is not None else (db_start + 1)
+    lines[insert_at:insert_at] = health_block
+    changed = True
+else:
+    end = health_start + 1
+    while end < block_end and (lines[end].startswith('      ') or lines[end].strip() == ''):
+        end += 1
+    existing = lines[health_start:end]
+    if existing != health_block:
+        lines[health_start:end] = health_block
+        changed = True
+
+if changed:
+    compose_path.write_text('\n'.join(lines) + '\n')
+    print('Updated Supabase db service compose configuration.')
+else:
+    print('Supabase db service compose configuration already matches expected port and healthcheck settings.')
 PY
 }
 
