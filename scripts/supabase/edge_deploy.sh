@@ -4,6 +4,16 @@ lane="${1:?lane}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 official_docker_dir="$root/ops/supabase/lanes/latest-docker"
 official_compose="$official_docker_dir/docker-compose.yml"
+compose_overrides_dir="$root/ops/supabase/lanes"
+global_compose_override="$compose_overrides_dir/docker-compose.override.yml"
+lane_compose_override="$compose_overrides_dir/docker-compose.${lane}.yml"
+declare -a compose_files=("$official_compose")
+if [[ -f "$global_compose_override" ]]; then
+  compose_files+=("$global_compose_override")
+fi
+if [[ -f "$lane_compose_override" ]]; then
+  compose_files+=("$lane_compose_override")
+fi
 repo_envfile="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 
@@ -105,4 +115,8 @@ cleanup_files+=("$tmp_env")
   printf 'SUPABASE_SUPER_PASSWORD=%s\n' "$super_password"
 } >"$tmp_env"
 
-docker compose --project-directory "$official_docker_dir" --env-file "$tmp_env" -f "$official_compose" restart edge-runtime
+compose_cmd=(docker compose --project-directory "$official_docker_dir" --env-file "$tmp_env")
+for compose_file in "${compose_files[@]}"; do
+  compose_cmd+=(-f "$compose_file")
+done
+"${compose_cmd[@]}" restart edge-runtime
