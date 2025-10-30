@@ -27,6 +27,7 @@ env_file="$root/ops/supabase/lanes/${lane}.env"
 credentials_file="$root/ops/supabase/lanes/credentials.env"
 official_docker_dir="$root/ops/supabase/lanes/latest-docker"
 official_compose="$official_docker_dir/docker-compose.yml"
+lib_env_helpers="$root/scripts/supabase/lib/env.sh"
 
 fail() {
   echo "❌ $1" >&2
@@ -66,6 +67,13 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
   fail "python3 is required to validate SUPABASE_DB_URL." "Install python3 on the runner."
 fi
+
+if [[ ! -f "$lib_env_helpers" ]]; then
+  fail "Supabase env helper missing at $lib_env_helpers." "Ensure the repository is up to date."
+fi
+
+# shellcheck disable=SC1090
+source "$lib_env_helpers"
 
 lane_upper="${lane^^}"
 # shellcheck disable=SC1090
@@ -140,7 +148,6 @@ required_vars=(
   STUDIO_DEFAULT_PROJECT
   DASHBOARD_USERNAME
   DASHBOARD_PASSWORD
-  SUPABASE_DB_URL
   SUPABASE_PROJECT_REF
 )
 
@@ -153,6 +160,25 @@ done
 
 if [[ ${#missing[@]} -gt 0 ]]; then
   fail "Missing required variables: ${missing[*]}" "Update $env_file with the required values."
+fi
+
+expected_db_url=""
+if [[ -n "${PGHOST:-}" && -n "${PGPORT:-${PGHOST_PORT:-}}" && -n "${PGUSER:-}" && -n "${PGDATABASE:-}" ]]; then
+  if ! expected_db_url="$(supabase_build_db_url "${PGUSER}" "${PGPASSWORD:-}" "${PGHOST}" "${PGPORT}" "${PGDATABASE}")"; then
+    fail "Unable to construct SUPABASE_DB_URL from lane metadata." "Check PGHOST/PGPORT/PGUSER/PGDATABASE values."
+  fi
+fi
+
+if [[ -n "$expected_db_url" ]]; then
+  if [[ "${SUPABASE_DB_URL:-}" != "$expected_db_url" ]]; then
+    echo "ℹ️  Normalizing SUPABASE_DB_URL to match PGHOST=${PGHOST} and PGPORT=${PGPORT}." >&2
+    if ! supabase_update_env_var "$env_file" "SUPABASE_DB_URL" "$expected_db_url"; then
+      fail "Failed to update SUPABASE_DB_URL in $env_file." "Ensure the file is writable by the runner."
+    fi
+    SUPABASE_DB_URL="$expected_db_url"
+  fi
+else
+  fail "Unable to determine expected SUPABASE_DB_URL." "Verify PG* variables are set in $env_file."
 fi
 
 assert_numeric() {

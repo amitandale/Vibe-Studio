@@ -84,6 +84,42 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 lanes_dir="$root/ops/supabase/lanes"
 mkdir -p "$lanes_dir"
 
+lib_env_helpers="$root/scripts/supabase/lib/env.sh"
+if [[ -f "$lib_env_helpers" ]]; then
+  # shellcheck disable=SC1090
+  source "$lib_env_helpers"
+fi
+
+if ! declare -f supabase_build_db_url >/dev/null 2>&1; then
+  supabase_build_db_url() {
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import sys
+from urllib.parse import quote
+
+user = quote(sys.argv[1]) if sys.argv[1] else ""
+password = sys.argv[2]
+host = sys.argv[3]
+port = sys.argv[4]
+database = quote(sys.argv[5]) if sys.argv[5] else ""
+
+auth = ""
+if user:
+    if password:
+        auth = f"{user}:{quote(password)}@"
+    else:
+        auth = f"{user}@"
+elif password:
+    auth = f":{quote(password)}@"
+
+endpoint = host
+if port:
+    endpoint = f"{host}:{port}"
+
+print(f"postgresql://{auth}{endpoint}/{database}")
+PY
+  }
+fi
+
 lane_upper="${lane^^}"
 
 credentials_file="$root/ops/supabase/lanes/credentials.env"
@@ -330,27 +366,11 @@ set_env "SUPABASE_URL" "$(ensure_existing_or_default SUPABASE_URL "$site_url_def
 set_env "API_EXTERNAL_URL" "$(ensure_existing_or_default API_EXTERNAL_URL "$site_url_default")"
 set_env "DOCKER_SOCKET_LOCATION" "$(ensure_existing_or_default DOCKER_SOCKET_LOCATION "/var/run/docker.sock")"
 
-build_supabase_db_url() {
-  python3 - "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db" <<'PY'
-import sys
-from urllib.parse import quote
-
-user = quote(sys.argv[1])
-password = sys.argv[2]
-host = sys.argv[3]
-port = sys.argv[4]
-database = quote(sys.argv[5])
-
-if password:
-    auth = f"{user}:{quote(password)}"
-else:
-    auth = user
-
-print(f"postgresql://{auth}@{host}:{port}/{database}")
-PY
-}
-
-set_env "SUPABASE_DB_URL" "$(build_supabase_db_url)"
+if ! db_url="$(supabase_build_db_url "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db")"; then
+  echo "Failed to construct SUPABASE_DB_URL; verify python3 is installed." >&2
+  exit 1
+fi
+set_env "SUPABASE_DB_URL" "$db_url"
 set_env "SUPABASE_PROJECT_REF" "$(ensure_existing_or_default SUPABASE_PROJECT_REF "$lane")"
 
 set_env "LOGFLARE_PUBLIC_ACCESS_TOKEN" "$logflare_public"
