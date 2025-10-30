@@ -20,6 +20,9 @@ fi
 
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+cli_helper="$root/scripts/supabase/cli.sh"
+supabase_cli_ready=false
+supabase_cli_last_output=""
 official_docker_dir="$root/ops/supabase/lanes/latest-docker"
 official_compose="$official_docker_dir/docker-compose.yml"
 official_env_template="$official_docker_dir/.env.example"
@@ -234,14 +237,14 @@ prepare_envfile() {
   add_or_update_kv env_map key_order PGPORT "$host_port"
   add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  local lane_role_password
-  lane_role_password="${env_map[PGPASSWORD]:-}"
-  if [[ -z "$lane_role_password" ]]; then
-    lane_role_password="$injected_super_password"
+  if [[ -z "${env_map[PGPASSWORD]:-}" && -n "$injected_super_password" ]]; then
+    add_or_update_kv env_map key_order PGPASSWORD "$injected_super_password"
   fi
-  add_or_update_kv env_map key_order PGPASSWORD "$lane_role_password"
-  add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "$injected_super_role"
-  add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
+
+  add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "${env_map[SUPABASE_SUPER_ROLE]:-$injected_super_role}"
+  if [[ -z "${env_map[SUPABASE_SUPER_PASSWORD]:-}" && -n "$injected_super_password" ]]; then
+    add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
+  fi
 
   if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
     add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"
@@ -336,6 +339,19 @@ source_lane_env() {
   fi
 }
 source_lane_env "$envfile"
+# Prepare Supabase CLI context for database-aware commands.
+if [[ -f "$cli_helper" ]]; then
+  # shellcheck disable=SC1090
+  source "$cli_helper"
+  if supabase_cli_env "$lane"; then
+    supabase_cli_ready=true
+  else
+    supabase_cli_last_output="Supabase CLI environment preparation failed"
+    echo "⚠️  Unable to prepare Supabase CLI environment; falling back to direct Postgres probes." >&2
+  fi
+else
+  echo "⚠️  Supabase CLI helper missing at $cli_helper; database checks will fall back to docker exec." >&2
+fi
 # The deploy workflow runs `docker compose pull` using the same compose directory and
 # lane env file immediately before invoking this helper, so all commands below assume
 # Supabase images are already refreshed to match the upstream compose definition.
@@ -950,6 +966,20 @@ check_pg_login() {
 
   if [[ -z "$user" ]]; then
     return 1
+  fi
+
+  if [[ "$supabase_cli_ready" == true ]]; then
+    local cli_output cli_status
+    set +e
+    cli_output=$(supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive 2>&1)
+    cli_status=$?
+    set -e
+    pg_probe_last_origin="supabase-cli"
+    pg_probe_last_status=$cli_status
+    pg_probe_last_output="$cli_output"
+    if [[ $cli_status -eq 0 ]]; then
+      return 0
+    fi
   fi
 
   pg_probe_last_host_attempted=0

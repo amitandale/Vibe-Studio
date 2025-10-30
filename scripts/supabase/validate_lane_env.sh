@@ -60,6 +60,10 @@ if [[ ! -f "$credentials_file" ]]; then
   fail "Credentials file $credentials_file not found." "Populate ops/supabase/lanes/credentials.env with lane secrets."
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  fail "python3 is required to validate SUPABASE_DB_URL." "Install python3 on the runner."
+fi
+
 lane_upper="${lane^^}"
 # shellcheck disable=SC1090
 source "$credentials_file"
@@ -80,7 +84,7 @@ fi
 
 super_password="${!super_password_var:-}"
 if [[ -z "$super_password" ]]; then
-  fail "${super_password_var} missing in credentials file." "Add the superuser password to ops/supabase/lanes/credentials.env."
+  echo "⚠️  ${super_password_var} missing in credentials file; continuing under passwordless mode." >&2
 fi
 
 required_vars=(
@@ -92,9 +96,7 @@ required_vars=(
   PGHOST_PORT
   PGDATABASE
   PGUSER
-  PGPASSWORD
   SUPABASE_SUPER_ROLE
-  SUPABASE_SUPER_PASSWORD
   POSTGRES_HOST
   POSTGRES_PORT
   POSTGRES_DB
@@ -135,6 +137,8 @@ required_vars=(
   STUDIO_DEFAULT_PROJECT
   DASHBOARD_USERNAME
   DASHBOARD_PASSWORD
+  SUPABASE_DB_URL
+  SUPABASE_PROJECT_REF
 )
 
 missing=()
@@ -183,10 +187,6 @@ if [[ "${PGUSER}" != "${SUPABASE_SUPER_ROLE}" ]]; then
   fail "PGUSER ('${PGUSER}') must match SUPABASE_SUPER_ROLE ('${SUPABASE_SUPER_ROLE}')." "Provision the lane env again to sync credentials."
 fi
 
-if [[ "${PGPASSWORD}" != "${SUPABASE_SUPER_PASSWORD}" ]]; then
-  fail "PGPASSWORD does not match SUPABASE_SUPER_PASSWORD for lane '$lane'." "Regenerate the lane env so credentials stay aligned."
-fi
-
 if [[ ! "${VOL_NS}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
   fail "VOL_NS must use lowercase letters, numbers, or dashes (received '${VOL_NS}')." "Update VOL_NS in $env_file to a slug-safe value."
 fi
@@ -200,6 +200,85 @@ for url_var in SITE_URL SUPABASE_PUBLIC_URL SUPABASE_URL API_EXTERNAL_URL; do
     fail "$url_var must be an http(s) URL (received '${!url_var}')." "Update $env_file with a full URL including scheme."
   fi
 done
+
+parse_db_url() {
+  python3 - "$SUPABASE_DB_URL" <<'PY'
+import sys
+from urllib.parse import urlparse, unquote
+
+url = urlparse(sys.argv[1])
+if url.scheme not in ("postgresql", "postgres"):
+    print("invalid scheme", file=sys.stderr)
+    sys.exit(1)
+
+username = unquote(url.username or "")
+password = unquote(url.password or "")
+host = url.hostname or ""
+port = url.port
+database = unquote((url.path or "/")[1:])
+
+print(username)
+print(password)
+print(host)
+print(str(port or ""))
+print(database)
+PY
+}
+
+mapfile -t db_url_parts < <(parse_db_url) || fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+
+db_url_user="${db_url_parts[0]}"
+db_url_password="${db_url_parts[1]}"
+db_url_host="${db_url_parts[2]}"
+db_url_port="${db_url_parts[3]}"
+db_url_database="${db_url_parts[4]}"
+
+if [[ -z "$db_url_host" || -z "$db_url_port" || -z "$db_url_user" ]]; then
+  fail "SUPABASE_DB_URL must include user, host, and port." "Re-run provisioning so the helper can rebuild the URL."
+fi
+
+if [[ "$db_url_host" != "${PGHOST}" ]]; then
+  fail "SUPABASE_DB_URL host (${db_url_host}) does not match PGHOST (${PGHOST})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$db_url_port" != "${PGPORT}" ]]; then
+  fail "SUPABASE_DB_URL port (${db_url_port}) does not match PGPORT (${PGPORT})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$db_url_database" != "${PGDATABASE}" ]]; then
+  fail "SUPABASE_DB_URL database (${db_url_database}) does not match PGDATABASE (${PGDATABASE})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$db_url_user" != "${PGUSER}" ]]; then
+  fail "SUPABASE_DB_URL user (${db_url_user}) does not match PGUSER (${PGUSER})." "Update $env_file or regenerate it."
+fi
+
+if [[ -n "${PGPASSWORD:-}" && "$db_url_password" != "${PGPASSWORD}" ]]; then
+  fail "SUPABASE_DB_URL password does not match PGPASSWORD." "Regenerate the lane env so the connection string stays aligned."
+fi
+
+if [[ -z "${PGPASSWORD:-}" && -n "$db_url_password" ]]; then
+  echo "⚠️  SUPABASE_DB_URL encodes a password while PGPASSWORD is blank; ensure this is intentional." >&2
+fi
+
+if [[ "${SUPABASE_PROJECT_REF}" != "$lane" ]]; then
+  echo "⚠️  SUPABASE_PROJECT_REF (${SUPABASE_PROJECT_REF}) differs from lane '$lane'." >&2
+fi
+
+cli_helper="$root/scripts/supabase/cli.sh"
+if [[ -f "$cli_helper" ]]; then
+  # shellcheck disable=SC1090
+  source "$cli_helper"
+  if supabase_cli_env "$lane" && command -v supabase >/dev/null 2>&1; then
+    if ! supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive >/dev/null 2>&1; then
+      fail "supabase db push --dry-run failed for lane '$lane'." "Check Supabase CLI credentials and connectivity."
+    fi
+  else
+    echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2
+  fi
+else
+  echo "⚠️  Supabase CLI helper missing at $cli_helper; skipping db push dry-run." >&2
+fi
 
 weak_regex='(changeme|password|test|example|temp|secret)'
 if [[ "${PGPASSWORD,,}" =~ $weak_regex ]]; then

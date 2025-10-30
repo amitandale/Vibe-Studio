@@ -43,6 +43,7 @@ require_cmd() {
 }
 
 require_cmd openssl
+require_cmd python3
 
 force=false
 pg_password=""
@@ -200,12 +201,6 @@ if [[ -z "$pg_super_password" && -n "$credentials_super_password" ]]; then
   pg_super_password="$credentials_super_password"
 fi
 
-if [[ -z "$pg_super_password" ]]; then
-  echo "Supabase superuser password for lane '$lane' is missing." >&2
-  echo "Define ${lane_upper}_SUPER_PASSWORD in $credentials_file or pass --pg-super-password." >&2
-  exit 1
-fi
-
 if [[ "$pg_super_password_override" == true || "$pg_super_password" != "${credentials_super_password}" ]]; then
   update_credentials_file "${lane_upper}_SUPER_PASSWORD" "$pg_super_password"
 fi
@@ -335,6 +330,29 @@ set_env "SUPABASE_URL" "$(ensure_existing_or_default SUPABASE_URL "$site_url_def
 set_env "API_EXTERNAL_URL" "$(ensure_existing_or_default API_EXTERNAL_URL "$site_url_default")"
 set_env "DOCKER_SOCKET_LOCATION" "$(ensure_existing_or_default DOCKER_SOCKET_LOCATION "/var/run/docker.sock")"
 
+build_supabase_db_url() {
+  python3 - "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db" <<'PY'
+import sys
+from urllib.parse import quote
+
+user = quote(sys.argv[1])
+password = sys.argv[2]
+host = sys.argv[3]
+port = sys.argv[4]
+database = quote(sys.argv[5])
+
+if password:
+    auth = f"{user}:{quote(password)}"
+else:
+    auth = user
+
+print(f"postgresql://{auth}@{host}:{port}/{database}")
+PY
+}
+
+set_env "SUPABASE_DB_URL" "$(build_supabase_db_url)"
+set_env "SUPABASE_PROJECT_REF" "$(ensure_existing_or_default SUPABASE_PROJECT_REF "$lane")"
+
 set_env "LOGFLARE_PUBLIC_ACCESS_TOKEN" "$logflare_public"
 set_env "LOGFLARE_PRIVATE_ACCESS_TOKEN" "$logflare_private"
 set_env "VAULT_ENC_KEY" "$vault_enc_key"
@@ -375,9 +393,9 @@ set_env "DASHBOARD_USERNAME" "$dashboard_user"
 set_env "DASHBOARD_PASSWORD" "$dashboard_password"
 
 required_non_empty=(
-  COMPOSE_PROJECT_NAME LANE VOL_NS PGHOST PGPORT PGHOST_PORT PGDATABASE PGUSER PGPASSWORD
+  COMPOSE_PROJECT_NAME LANE VOL_NS PGHOST PGPORT PGHOST_PORT PGDATABASE PGUSER
   POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_PASSWORD
-  SUPABASE_SUPER_ROLE SUPABASE_SUPER_PASSWORD
+  SUPABASE_SUPER_ROLE
   JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SUPABASE_ANON_KEY SUPABASE_SERVICE_KEY
   PG_META_CRYPTO_KEY SECRET_KEY_BASE VAULT_ENC_KEY
   KONG_HTTP_PORT KONG_HTTPS_PORT EDGE_PORT EDGE_ENV_FILE
@@ -385,6 +403,7 @@ required_non_empty=(
   DOCKER_SOCKET_LOCATION LOGFLARE_PUBLIC_ACCESS_TOKEN LOGFLARE_PRIVATE_ACCESS_TOKEN
   SMTP_HOST SMTP_PORT SMTP_ADMIN_EMAIL SMTP_SENDER_NAME
   DASHBOARD_USERNAME DASHBOARD_PASSWORD
+  SUPABASE_DB_URL SUPABASE_PROJECT_REF
 )
 
 missing=()

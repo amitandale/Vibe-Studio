@@ -8,16 +8,27 @@ Install these utilities on the runner before provisioning Supabase services:
 
 - Docker Engine 24+
 - Docker Compose (plugin)
+- Supabase CLI 1.171+ (`supabase`)
 - PostgreSQL client tools (`psql`, `pg_isready`)
 - `jq`
 - `python3`
 - `curl`
 - `openssl`
 
+The Supabase CLI drives all lane database and Edge automation. Install it with the
+official installer or download the static binary, then make it available on the
+runner `PATH`:
+
+```bash
+curl -fsSL https://supabase.com/cli/install.sh | sh
+# or download the release binary manually and move it into /usr/local/bin
+supabase --version
+```
+
 Verify availability:
 
 ```bash
-which docker docker compose psql jq python3 curl openssl
+which docker docker compose supabase psql jq python3 curl openssl
 ```
 
 ## 🏗️ Architecture Overview
@@ -39,14 +50,15 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 
 ## 🔐 Credential Source of Truth
 
-`ops/supabase/lanes/credentials.env` is the only canonical location for lane passwords. Every helper script reads the
-Postgres and superuser credentials directly from that file (or explicit CLI overrides) and injects them into temporary
-environment files at runtime. Nothing is written to `~/.config` or any other long-lived state directory, so rotating a
-password is as simple as editing `credentials.env` and rerunning the provisioning helper.
+`ops/supabase/lanes/credentials.env` is still the canonical location for lane database
+passwords, but the Supabase CLI now reads every credential directly from the hydrated
+lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` and the
+automation feeds it straight into `supabase db` and `supabase functions` commands.
 
-The generated `ops/supabase/lanes/<lane>.env` files contain non-secret lane settings (ports, JWT keys, etc.). Secrets are
-overlaid dynamically from `credentials.env` whenever Compose or health checks run, ensuring there is a single source of
-truth for authentication data.
+Because the CLI wrapper exports lane credentials on demand, helpers no longer rewrite
+`PGPASSWORD` into temporary files. You can operate in passwordless or password-backed
+modes by editing `ops/supabase/lanes/<lane>.env` directly or rotating the entries in
+`credentials.env` and regenerating the lane env file.
 
 ## 🚀 Initial Setup Steps
 
@@ -58,7 +70,7 @@ truth for authentication data.
    The reference tag or commit is stored in `ops/supabase/SUPABASE_DOCKER_REF`. When you need to upgrade Supabase, update that file to the desired tag, rerun the sync script, review the resulting diff (including `ops/supabase/lanes/latest-docker`), and commit the changes. The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the pinned Supabase release.
    During deploys the workflow automatically refreshes the referenced images with `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` before services start, so keeping the synced directory up to date with the pinned release is enough to track upstream updates.
 3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
-   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow will reuse. These values are required—if a password is missing the helper exits with an error instead of inventing one.
+   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow can reuse. You can leave the superuser password blank when the database trusts passwordless connections; the provisioning helper will still emit a usable `SUPABASE_DB_URL` for the CLI.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin
