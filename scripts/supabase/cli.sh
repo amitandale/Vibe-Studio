@@ -3,7 +3,7 @@ set -euo pipefail
 
 __supabase_cli_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 __supabase_cli_env_helpers="$__supabase_cli_root/scripts/supabase/lib/env.sh"
-__supabase_cli_default_version="${SUPABASE_CLI_VERSION:-1.171.4}"
+__supabase_cli_default_version="${SUPABASE_CLI_VERSION:-2.53.6}"
 
 if [[ -f "$__supabase_cli_env_helpers" ]]; then
   # shellcheck disable=SC1090

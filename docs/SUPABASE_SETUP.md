@@ -8,7 +8,7 @@ Install these utilities on the runner before provisioning Supabase services:
 
 - Docker Engine 24+
 - Docker Compose (plugin)
-- Supabase CLI 1.171+ (`supabase`)
+- Supabase CLI 2.53+ (`supabase`)
 - PostgreSQL client tools (`psql`, `pg_isready`)
 - `jq`
 - `python3`
@@ -16,7 +16,7 @@ Install these utilities on the runner before provisioning Supabase services:
 - `openssl`
 
 The Supabase CLI drives all lane database and Edge automation. The lane
-helpers automatically download a pinned release (default `1.171.4`) into
+helpers automatically download a pinned release (default `2.53.6`) into
 `$SUPABASE_STATE_DIR/bin` the first time they run on a host where `supabase`
 is missing. You can override the version by exporting
 `SUPABASE_CLI_VERSION=<tag>` before invoking any Supabase script or by
