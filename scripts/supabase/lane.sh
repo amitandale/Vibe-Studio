@@ -22,7 +22,81 @@ lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cli_helper="$root/scripts/supabase/cli.sh"
 supabase_cli_ready=false
-supabase_cli_last_output=""
+workdir_path="$(pwd)"
+workdir_mode_snapshot=""
+workdir_owner_snapshot=""
+
+supabase_lane_stat_mode() {
+  local path="$1" value
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    value=$(python3 -c 'import os, stat, sys
+path = sys.argv[1]
+try:
+    mode = os.stat(path).st_mode
+except FileNotFoundError:
+    sys.exit(1)
+
+print(oct(stat.S_IMODE(mode))[2:])' "$path") || return 1
+    printf '%s' "$value"
+    return 0
+  fi
+  if value=$(stat -c '%a' "$path" 2>/dev/null); then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+supabase_lane_stat_owner() {
+  local path="$1" value
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    value=$(python3 -c 'import os, sys
+path = sys.argv[1]
+try:
+    st = os.stat(path)
+except FileNotFoundError:
+    sys.exit(1)
+
+print(f"{st.st_uid}:{st.st_gid}")' "$path") || return 1
+    printf '%s' "$value"
+    return 0
+  fi
+  if value=$(stat -c '%u:%g' "$path" 2>/dev/null); then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+if [[ -d "$workdir_path" ]]; then
+  workdir_mode_snapshot="$(supabase_lane_stat_mode "$workdir_path" 2>/dev/null || true)"
+  workdir_owner_snapshot="$(supabase_lane_stat_owner "$workdir_path" 2>/dev/null || true)"
+fi
+
+restore_workdir_access() {
+  local path="$workdir_path"
+  if [[ -z "$path" || ! -d "$path" ]]; then
+    return
+  fi
+
+  if [[ -n "$workdir_mode_snapshot" ]]; then
+    chmod "$workdir_mode_snapshot" "$path" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$workdir_owner_snapshot" ]]; then
+    if chown "$workdir_owner_snapshot" "$path" >/dev/null 2>&1; then
+      :
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo chown "$workdir_owner_snapshot" "$path" >/dev/null 2>&1 || true
+    fi
+  fi
+}
 official_docker_dir="$root/ops/supabase/lanes/latest-docker"
 official_compose="$official_docker_dir/docker-compose.yml"
 official_env_template="$official_docker_dir/.env.example"
@@ -70,6 +144,7 @@ cleanup() {
   for file in "${cleanup_envfiles[@]}"; do
     [[ -f "$file" ]] && rm -f "$file"
   done
+  restore_workdir_access
 }
 trap cleanup EXIT
 
@@ -340,18 +415,19 @@ source_lane_env() {
 }
 source_lane_env "$envfile"
 # Prepare Supabase CLI context for database-aware commands.
-if [[ -f "$cli_helper" ]]; then
-  # shellcheck disable=SC1090
-  source "$cli_helper"
-  if supabase_cli_env "$lane"; then
-    supabase_cli_ready=true
-  else
-    supabase_cli_last_output="Supabase CLI environment preparation failed"
-    echo "⚠️  Unable to prepare Supabase CLI environment; falling back to direct Postgres probes." >&2
-  fi
-else
-  echo "⚠️  Supabase CLI helper missing at $cli_helper; database checks will fall back to docker exec." >&2
+if [[ ! -f "$cli_helper" ]]; then
+  echo "❌ Supabase CLI helper missing at $cli_helper" >&2
+  exit 1
 fi
+
+# shellcheck disable=SC1090
+source "$cli_helper"
+
+if ! supabase_cli_env "$lane"; then
+  echo "❌ Unable to prepare Supabase CLI environment for lane '$lane'" >&2
+  exit 1
+fi
+supabase_cli_ready=true
 # The deploy workflow runs `docker compose pull` using the same compose directory and
 # lane env file immediately before invoking this helper, so all commands below assume
 # Supabase images are already refreshed to match the upstream compose definition.

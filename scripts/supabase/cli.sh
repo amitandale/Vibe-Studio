@@ -47,7 +47,9 @@ supabase_cli_bootstrap() {
     return 0
   fi
 
-  local os arch tarball url tmpdir
+  local os arch tmpdir downloaded_tarball url http_status curl_status
+  local -a tarball_candidates=()
+  local -a curl_errors=()
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   case "$os" in
     linux|darwin) ;;
@@ -67,8 +69,13 @@ supabase_cli_bootstrap() {
       ;;
   esac
 
-  tarball="supabase_${desired_version}_${os}_${arch}.tar.gz"
-  url="https://github.com/supabase/cli/releases/download/v${desired_version}/${tarball}"
+  tarball_candidates=("supabase_${desired_version}_${os}_${arch}.tar.gz")
+  if [[ "$arch" == "amd64" ]]; then
+    tarball_candidates+=("supabase_${desired_version}_${os}_x64.tar.gz")
+  fi
+  if [[ "$arch" == "arm64" ]]; then
+    tarball_candidates+=("supabase_${desired_version}_${os}_arm64.tar.gz")
+  fi
   tmpdir="$(mktemp -d)"
 
   if ! command -v curl >/dev/null 2>&1; then
@@ -83,15 +90,39 @@ supabase_cli_bootstrap() {
     return 1
   fi
 
-  if ! curl -fsSL "$url" -o "$tmpdir/$tarball"; then
+  for tarball in "${tarball_candidates[@]}"; do
+    url="https://github.com/supabase/cli/releases/download/v${desired_version}/${tarball}"
+    local curl_stderr="$tmpdir/curl.err"
+    rm -f "$curl_stderr" "$tmpdir/$tarball"
+    set +e
+    http_status=$(curl -L --silent --show-error --write-out '%{http_code}' "$url" -o "$tmpdir/$tarball" 2>"$curl_stderr")
+    curl_status=$?
+    set -e
+    if (( curl_status == 0 )) && [[ "$http_status" == "200" ]]; then
+      downloaded_tarball="$tarball"
+      break
+    fi
+    local err_msg
+    err_msg="${url} => HTTP ${http_status:-unknown} (curl exit ${curl_status})"
+    if [[ -s "$curl_stderr" ]]; then
+      err_msg+=": $(tr -d '\r' <"$curl_stderr")"
+    fi
+    curl_errors+=("$err_msg")
+    rm -f "$tmpdir/$tarball"
+  done
+
+  if [[ -z "$downloaded_tarball" ]]; then
     rm -rf "$tmpdir"
-    echo "failed to download Supabase CLI $desired_version from $url" >&2
+    echo "failed to download Supabase CLI $desired_version from GitHub releases" >&2
+    if (( ${#curl_errors[@]} > 0 )); then
+      printf '  %s\n' "${curl_errors[@]}" >&2
+    fi
     return 1
   fi
 
-  if ! tar -xzf "$tmpdir/$tarball" -C "$tmpdir"; then
+  if ! tar -xzf "$tmpdir/$downloaded_tarball" -C "$tmpdir"; then
     rm -rf "$tmpdir"
-    echo "failed to extract Supabase CLI archive $tarball" >&2
+    echo "failed to extract Supabase CLI archive $downloaded_tarball" >&2
     return 1
   fi
 
@@ -117,7 +148,7 @@ supabase_cli_require() {
     return 0
   fi
   if [[ "$bin" == "supabase" ]]; then
-    supabase_cli_bootstrap "$lane" || true
+    supabase_cli_bootstrap "$lane" || return 1
   fi
   if command -v "$bin" >/dev/null 2>&1; then
     return 0
