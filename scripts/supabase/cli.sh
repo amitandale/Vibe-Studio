@@ -90,6 +90,8 @@ supabase_cli_bootstrap() {
     return 1
   fi
 
+  downloaded_tarball=""
+
   for tarball in "${tarball_candidates[@]}"; do
     url="https://github.com/supabase/cli/releases/download/v${desired_version}/${tarball}"
     local curl_stderr="$tmpdir/curl.err"
