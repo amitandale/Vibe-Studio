@@ -372,6 +372,7 @@ PY
         echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
       fi
 
+      echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
       supabase_cmd=(
         supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
       )
