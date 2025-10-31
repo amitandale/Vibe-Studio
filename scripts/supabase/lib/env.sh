@@ -3,7 +3,7 @@
 # Shared helpers for Supabase lane environment management.
 
 supabase_build_db_url() {
-  local user="${1:-}" password="${2:-}" host="${3:-}" port="${4:-}" database="${5:-}"
+  local user="${1:-}" password="${2:-}" host="${3:-}" port="${4:-}" database="${5:-}" query="${6:-}"
   if [[ -z "$host" || -z "$database" ]]; then
     echo "supabase_build_db_url requires host and database" >&2
     return 1
@@ -12,7 +12,7 @@ supabase_build_db_url() {
     echo "python3 is required to build Supabase database URLs" >&2
     return 1
   fi
-python3 - "$user" "$password" "$host" "$port" "$database" <<'PY'
+python3 - "$user" "$password" "$host" "$port" "$database" "$query" <<'PY'
 import sys
 from urllib.parse import quote
 
@@ -24,6 +24,7 @@ password_raw = sys.argv[2] if len(sys.argv) > 2 else ""
 host = sys.argv[3] if len(sys.argv) > 3 else ""
 port = sys.argv[4] if len(sys.argv) > 4 else ""
 database = encode(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else ""
+query = sys.argv[6] if len(sys.argv) > 6 else ""
 
 auth = ""
 if user:
@@ -38,7 +39,11 @@ endpoint = host
 if port:
     endpoint = f"{host}:{port}"
 
-print(f"postgresql://{auth}{endpoint}/{database}")
+if query:
+    if not query.startswith("?"):
+        query = f"?{query}"
+
+print(f"postgresql://{auth}{endpoint}/{database}{query}")
 PY
 }
 

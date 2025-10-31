@@ -164,7 +164,7 @@ fi
 
 expected_db_url=""
 if [[ -n "${PGHOST:-}" && -n "${PGPORT:-${PGHOST_PORT:-}}" && -n "${PGUSER:-}" && -n "${PGDATABASE:-}" ]]; then
-  if ! expected_db_url="$(supabase_build_db_url "${PGUSER}" "${PGPASSWORD:-}" "${PGHOST}" "${PGPORT}" "${PGDATABASE}")"; then
+  if ! expected_db_url="$(supabase_build_db_url "${PGUSER}" "${PGPASSWORD:-}" "${PGHOST}" "${PGPORT}" "${PGDATABASE}" "sslmode=disable")"; then
     fail "Unable to construct SUPABASE_DB_URL from lane metadata." "Check PGHOST/PGPORT/PGUSER/PGDATABASE values."
   fi
 fi
@@ -312,8 +312,94 @@ if [[ -f "$cli_helper" ]]; then
   # shellcheck disable=SC1090
   source "$cli_helper"
   if supabase_cli_env "$lane" && command -v supabase >/dev/null 2>&1; then
-    if ! supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive >/dev/null 2>&1; then
-      fail "supabase db push --dry-run failed for lane '$lane'." "Check Supabase CLI credentials and connectivity."
+    db_probe_state="unknown"
+    db_probe_method=""
+    if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
+      if command -v pg_isready >/dev/null 2>&1; then
+        db_probe_method="pg_isready"
+        set +e
+        pg_isready_output=$(pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" 2>&1)
+        pg_isready_status=$?
+        set -e
+        if (( pg_isready_status == 0 )); then
+          db_probe_state="online"
+        else
+          db_probe_state="offline"
+          db_probe_details="$pg_isready_output"
+        fi
+      else
+        db_probe_method="python-socket"
+        set +e
+        python_output=$(python3 - "$PGHOST" "$PGPORT" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+    except OSError as exc:
+        print(f"tcp connection failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+sys.exit(0)
+PY
+)
+        python_status=$?
+        set -e
+        if (( python_status == 0 )); then
+          db_probe_state="online"
+        else
+          db_probe_state="offline"
+          db_probe_details="$python_output"
+        fi
+      fi
+    fi
+
+    if [[ "$db_probe_state" == "offline" ]]; then
+      echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable via ${db_probe_method:-no probe}." >&2
+      if [[ -n "${db_probe_details:-}" ]]; then
+        while IFS= read -r line; do
+          echo "    ${line}" >&2
+        done <<<"${db_probe_details}"
+      fi
+    else
+      if [[ "$db_probe_state" == "online" ]]; then
+        echo "ℹ️  Running supabase db push dry-run (Postgres reachable via ${db_probe_method})." >&2
+      else
+        echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
+      fi
+
+      echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
+      echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
+      supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
+      set +e
+      PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
+      supabase_status=${PIPESTATUS[0]}
+      set -e
+      if (( supabase_status != 0 )); then
+        if [[ ! -s "$supabase_log_tmp" ]]; then
+          echo "‼️  Supabase CLI produced no output." >&2
+        fi
+        if grep -qi 'tls error' "$supabase_log_tmp"; then
+          echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
+          echo "    Ensure SUPABASE_DB_URL includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
+          echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
+        fi
+
+        if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
+          echo "‼️  Supabase CLI could not read Postgres data files due to permission issues." >&2
+          echo "    Run 'docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data' on the runner," >&2
+          echo "    then restart the container with 'docker compose --profile db-only restart db'." >&2
+          echo "    If credentials were reset inside the container, update ${lane^^}_PG_PASSWORD in ops/supabase/lanes/credentials.env." >&2
+        fi
+        rm -f "$supabase_log_tmp"
+        echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
+        fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
+      fi
+      rm -f "$supabase_log_tmp"
     fi
   else
     echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2

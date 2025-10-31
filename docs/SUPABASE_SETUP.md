@@ -50,8 +50,11 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 
 `ops/supabase/lanes/credentials.env` is still the canonical location for lane database
 passwords, but the Supabase CLI now reads every credential directly from the hydrated
-lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` and the
-automation feeds it straight into `supabase db` and `supabase functions` commands.
+lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` (including
+`?sslmode=disable` for local runners) and the automation feeds it straight into
+`supabase db` and `supabase functions` commands. Local Postgres containers ship with
+TLS disabled, so the helper explicitly opts out of SSL to prevent the Supabase CLI from
+attempting a TLS handshake that will be refused.
 
 Because the CLI wrapper exports lane credentials on demand, helpers no longer rewrite
 `PGPASSWORD` into temporary files. You can operate in passwordless or password-backed
@@ -139,6 +142,15 @@ stored roles using those credentials before migrations run, so the lane is heale
 - **`role "<pg-user>" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper expects the stored secrets to match the database before re-running the deploy.
 - **Kong not healthy**: Review logs via `docker compose --project-directory ops/supabase/lanes/latest-docker -f ops/supabase/lanes/latest-docker/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
+- **`tls error (server refused TLS connection)` or `could not open file "global/pg_filenode.map": Permission denied` during `supabase db push`**: Ensure the lane connection string ends with `?sslmode=disable` and that the Postgres container allows plaintext connections. If the error persists, the Supabase database volume permissions or superuser password have likely drifted. Run the following from the lane checkout:
+
+  ```bash
+  docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data
+  docker compose --profile db-only restart db
+  docker compose --profile db-only exec db psql -U postgres -d "${PGDATABASE:-postgres}" -c "ALTER USER supabase_admin WITH PASSWORD '<password-from-credentials.env>'"
+  ```
+
+  After the container restarts, update `${LANE^^}_PG_PASSWORD` in `ops/supabase/lanes/credentials.env` if it changed and re-run the deploy.
 
 ## 📚 References
 
