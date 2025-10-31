@@ -15,17 +15,15 @@ Install these utilities on the runner before provisioning Supabase services:
 - `curl`
 - `openssl`
 
-The Supabase CLI drives all lane database and Edge automation. Install it with the
-official installer or download the static binary, then make it available on the
-runner `PATH`:
+The Supabase CLI drives all lane database and Edge automation. The lane
+helpers automatically download a pinned release (default `1.171.4`) into
+`$SUPABASE_STATE_DIR/bin` the first time they run on a host where `supabase`
+is missing. You can override the version by exporting
+`SUPABASE_CLI_VERSION=<tag>` before invoking any Supabase script or by
+pre-installing the CLI somewhere on `PATH`.
 
-```bash
-curl -fsSL https://supabase.com/cli/install.sh | sh
-# or download the release binary manually and move it into /usr/local/bin
-supabase --version
-```
-
-Verify availability:
+Verify availability (after the bootstrap runs once or if you install it
+system-wide):
 
 ```bash
 which docker docker compose supabase psql jq python3 curl openssl

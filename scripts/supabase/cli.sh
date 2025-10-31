@@ -3,19 +3,12 @@ set -euo pipefail
 
 __supabase_cli_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 __supabase_cli_env_helpers="$__supabase_cli_root/scripts/supabase/lib/env.sh"
+__supabase_cli_default_version="${SUPABASE_CLI_VERSION:-1.171.4}"
 
 if [[ -f "$__supabase_cli_env_helpers" ]]; then
   # shellcheck disable=SC1090
   source "$__supabase_cli_env_helpers"
 fi
-
-supabase_cli_require() {
-  local bin="$1"
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    echo "required command '$bin' not found in PATH" >&2
-    return 1
-  fi
-}
 
 supabase_cli_state_dir() {
   local lane="$1"
@@ -26,6 +19,113 @@ supabase_cli_state_dir() {
   printf '%s/.supabase/%s' "$__supabase_cli_root" "$lane"
 }
 
+supabase_cli_bin_dir() {
+  local lane="$1"
+  printf '%s/bin' "$(supabase_cli_state_dir "$lane")"
+}
+
+supabase_cli_bootstrap() {
+  local lane="${1:-${LANE:-default}}"
+  local desired_version="$__supabase_cli_default_version"
+  local state_dir bin_dir version_file current_version
+
+  state_dir="$(supabase_cli_state_dir "$lane")"
+  bin_dir="$(supabase_cli_bin_dir "$lane")"
+  version_file="$state_dir/.supabase-cli-version"
+
+  mkdir -p "$bin_dir"
+
+  if [[ -f "$version_file" ]]; then
+    current_version="$(<"$version_file")"
+  else
+    current_version=""
+  fi
+
+  if [[ -x "$bin_dir/supabase" && "$current_version" == "$desired_version" ]]; then
+    PATH="$bin_dir:$PATH"
+    export PATH
+    return 0
+  fi
+
+  local os arch tarball url tmpdir
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$os" in
+    linux|darwin) ;;
+    *)
+      echo "unsupported OS for Supabase CLI bootstrap: $os" >&2
+      return 1
+      ;;
+  esac
+
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      echo "unsupported architecture for Supabase CLI bootstrap: $arch" >&2
+      return 1
+      ;;
+  esac
+
+  tarball="supabase_${desired_version}_${os}_${arch}.tar.gz"
+  url="https://github.com/supabase/cli/releases/download/v${desired_version}/${tarball}"
+  tmpdir="$(mktemp -d)"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    rm -rf "$tmpdir"
+    echo "required command 'curl' not found for Supabase CLI bootstrap" >&2
+    return 1
+  fi
+
+  if ! command -v tar >/dev/null 2>&1; then
+    rm -rf "$tmpdir"
+    echo "required command 'tar' not found for Supabase CLI bootstrap" >&2
+    return 1
+  fi
+
+  if ! curl -fsSL "$url" -o "$tmpdir/$tarball"; then
+    rm -rf "$tmpdir"
+    echo "failed to download Supabase CLI $desired_version from $url" >&2
+    return 1
+  fi
+
+  if ! tar -xzf "$tmpdir/$tarball" -C "$tmpdir"; then
+    rm -rf "$tmpdir"
+    echo "failed to extract Supabase CLI archive $tarball" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$tmpdir/supabase" ]]; then
+    rm -rf "$tmpdir"
+    echo "Supabase CLI archive did not contain 'supabase' binary" >&2
+    return 1
+  fi
+
+  rm -f "$bin_dir/supabase"
+  mv "$tmpdir/supabase" "$bin_dir/supabase"
+  chmod +x "$bin_dir/supabase"
+  printf '%s' "$desired_version" >"$version_file"
+
+  PATH="$bin_dir:$PATH"
+  export PATH
+  rm -rf "$tmpdir"
+}
+
+supabase_cli_require() {
+  local bin="$1" lane="${2:-${LANE:-default}}"
+  if command -v "$bin" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$bin" == "supabase" ]]; then
+    supabase_cli_bootstrap "$lane" || true
+  fi
+  if command -v "$bin" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "required command '$bin' not found in PATH" >&2
+  return 1
+}
+
 supabase_cli_env() {
   local lane="${1:?lane}";
   local repo_envfile="$__supabase_cli_root/ops/supabase/lanes/${lane}.env"
@@ -33,8 +133,8 @@ supabase_cli_env() {
     echo "lane env file $repo_envfile missing; run scripts/supabase/provision_lane_env.sh $lane" >&2
     return 1
   fi
-  supabase_cli_require supabase || return 1
-  supabase_cli_require python3 || return 1
+  supabase_cli_require supabase "$lane" || return 1
+  supabase_cli_require python3 "$lane" || return 1
 
   # shellcheck disable=SC1090
   set -a; source "$repo_envfile"; set +a
