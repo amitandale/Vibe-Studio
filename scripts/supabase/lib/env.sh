@@ -12,24 +12,27 @@ supabase_build_db_url() {
     echo "python3 is required to build Supabase database URLs" >&2
     return 1
   fi
-  python3 - "$user" "$password" "$host" "$port" "$database" <<'PY'
+python3 - "$user" "$password" "$host" "$port" "$database" <<'PY'
 import sys
 from urllib.parse import quote
 
-user = quote(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1] else ""
-password = sys.argv[2] if len(sys.argv) > 2 else ""
+def encode(value: str) -> str:
+    return quote(value, safe="")
+
+user = encode(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1] else ""
+password_raw = sys.argv[2] if len(sys.argv) > 2 else ""
 host = sys.argv[3] if len(sys.argv) > 3 else ""
 port = sys.argv[4] if len(sys.argv) > 4 else ""
-database = quote(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else ""
+database = encode(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else ""
 
 auth = ""
 if user:
-    if password:
-        auth = f"{user}:{quote(password)}@"
+    if password_raw:
+        auth = f"{user}:{encode(password_raw)}@"
     else:
         auth = f"{user}@"
-elif password:
-    auth = f":{quote(password)}@"
+elif password_raw:
+    auth = f":{encode(password_raw)}@"
 
 endpoint = host
 if port:

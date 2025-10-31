@@ -50,20 +50,23 @@ supabase_cli_env() {
 import sys
 from urllib.parse import quote
 
-user = quote(sys.argv[1]) if sys.argv[1] else ""
+def encode(value: str) -> str:
+    return quote(value, safe="")
+
+user = encode(sys.argv[1]) if sys.argv[1] else ""
 password = sys.argv[2]
 host = sys.argv[3]
 port = sys.argv[4]
-database = quote(sys.argv[5]) if sys.argv[5] else ""
+database = encode(sys.argv[5]) if sys.argv[5] else ""
 
 auth = ""
 if user:
     if password:
-        auth = f"{user}:{quote(password)}@"
+        auth = f"{user}:{encode(password)}@"
     else:
         auth = f"{user}@"
 elif password:
-    auth = f":{quote(password)}@"
+    auth = f":{encode(password)}@"
 
 endpoint = host
 if port:

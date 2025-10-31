@@ -235,9 +235,10 @@ parse_db_url() {
 import sys
 from urllib.parse import urlparse, unquote
 
-url = urlparse(sys.argv[1])
+raw_url = sys.argv[1]
+url = urlparse(raw_url)
 if url.scheme not in ("postgresql", "postgres"):
-    print("invalid scheme", file=sys.stderr)
+    print(f"invalid scheme while parsing '{raw_url}'", file=sys.stderr)
     sys.exit(1)
 
 username = unquote(url.username or "")
@@ -246,7 +247,7 @@ host = url.hostname or ""
 try:
     port = url.port
 except ValueError as exc:
-    print(f"invalid port: {exc}", file=sys.stderr)
+    print(f"invalid port while parsing '{raw_url}': {exc}", file=sys.stderr)
     sys.exit(1)
 database = unquote((url.path or "/")[1:])
 
@@ -259,10 +260,12 @@ PY
 }
 
 if ! mapfile -t db_url_parts < <(parse_db_url); then
+  echo "‼️  Failed to parse SUPABASE_DB_URL='${SUPABASE_DB_URL:-<unset>}'" >&2
   fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
 fi
 
 if [[ ${#db_url_parts[@]} -ne 5 ]]; then
+  echo "‼️  Unexpected parser output for SUPABASE_DB_URL='${SUPABASE_DB_URL:-<unset>}'" >&2
   fail "SUPABASE_DB_URL is invalid." "Ensure it is a postgresql:// URL."
 fi
 
