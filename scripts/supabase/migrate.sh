@@ -75,6 +75,6 @@ fi
 
 echo "ℹ️  Running supabase db $action for lane '$lane' (config: $SUPABASE_CONFIG_PATH)" >&2
 
-args=("supabase" "db" "$action" "--db-url" "$SUPABASE_DB_URL" "--non-interactive")
+args=("supabase" "db" "$action" "--db-url" "$SUPABASE_DB_URL")
 
 "${args[@]}"

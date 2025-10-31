@@ -373,7 +373,7 @@ PY
       fi
 
       supabase_cmd=(
-        supabase db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive
+        supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
       )
       set +e
       supabase_output="$(${supabase_cmd[@]} 2>&1)"
