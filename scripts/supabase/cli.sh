@@ -3,7 +3,7 @@ set -euo pipefail
 
 __supabase_cli_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 __supabase_cli_env_helpers="$__supabase_cli_root/scripts/supabase/lib/env.sh"
-__supabase_cli_default_version="${SUPABASE_CLI_VERSION:-2.53.6}"
+__supabase_cli_default_version="${SUPABASE_CLI_VERSION:-2.54.11}"
 
 if [[ -f "$__supabase_cli_env_helpers" ]]; then
   # shellcheck disable=SC1090
@@ -47,7 +47,7 @@ supabase_cli_bootstrap() {
     return 0
   fi
 
-  local os arch tmpdir downloaded_tarball url http_status curl_status
+  local os arch tmpdir downloaded_asset downloaded_path url http_status curl_status
   local -a tarball_candidates=()
   local -a curl_errors=()
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -76,6 +76,9 @@ supabase_cli_bootstrap() {
   if [[ "$arch" == "arm64" ]]; then
     tarball_candidates+=("supabase_${desired_version}_${os}_arm64.tar.gz")
   fi
+  if [[ "$os" == "linux" ]]; then
+    tarball_candidates+=("supabase_${desired_version}_${os}_${arch}.deb")
+  fi
   tmpdir="$(mktemp -d)"
 
   if ! command -v curl >/dev/null 2>&1; then
@@ -90,6 +93,9 @@ supabase_cli_bootstrap() {
     return 1
   fi
 
+  downloaded_asset=""
+  downloaded_path=""
+
   for tarball in "${tarball_candidates[@]}"; do
     url="https://github.com/supabase/cli/releases/download/v${desired_version}/${tarball}"
     local curl_stderr="$tmpdir/curl.err"
@@ -99,7 +105,8 @@ supabase_cli_bootstrap() {
     curl_status=$?
     set -e
     if (( curl_status == 0 )) && [[ "$http_status" == "200" ]]; then
-      downloaded_tarball="$tarball"
+      downloaded_asset="$tarball"
+      downloaded_path="$tmpdir/$tarball"
       break
     fi
     local err_msg
@@ -111,7 +118,7 @@ supabase_cli_bootstrap() {
     rm -f "$tmpdir/$tarball"
   done
 
-  if [[ -z "$downloaded_tarball" ]]; then
+  if [[ -z "$downloaded_asset" ]]; then
     rm -rf "$tmpdir"
     echo "failed to download Supabase CLI $desired_version from GitHub releases" >&2
     if (( ${#curl_errors[@]} > 0 )); then
@@ -120,20 +127,46 @@ supabase_cli_bootstrap() {
     return 1
   fi
 
-  if ! tar -xzf "$tmpdir/$downloaded_tarball" -C "$tmpdir"; then
-    rm -rf "$tmpdir"
-    echo "failed to extract Supabase CLI archive $downloaded_tarball" >&2
-    return 1
-  fi
+  local extracted_supabase=""
+  case "$downloaded_asset" in
+    *.tar.gz)
+      if ! tar -xzf "$downloaded_path" -C "$tmpdir"; then
+        rm -rf "$tmpdir"
+        echo "failed to extract Supabase CLI archive $downloaded_asset" >&2
+        return 1
+      fi
+      extracted_supabase="$tmpdir/supabase"
+      ;;
+    *.deb)
+      if ! command -v dpkg-deb >/dev/null 2>&1; then
+        rm -rf "$tmpdir"
+        echo "required command 'dpkg-deb' not found for Supabase CLI bootstrap" >&2
+        return 1
+      fi
+      local deb_extract_dir="$tmpdir/deb"
+      mkdir -p "$deb_extract_dir"
+      if ! dpkg-deb -x "$downloaded_path" "$deb_extract_dir" >/dev/null; then
+        rm -rf "$tmpdir"
+        echo "failed to extract Supabase CLI package $downloaded_asset" >&2
+        return 1
+      fi
+      extracted_supabase="$deb_extract_dir/usr/bin/supabase"
+      ;;
+    *)
+      rm -rf "$tmpdir"
+      echo "unknown Supabase CLI asset type: $downloaded_asset" >&2
+      return 1
+      ;;
+  esac
 
-  if [[ ! -f "$tmpdir/supabase" ]]; then
+  if [[ ! -f "$extracted_supabase" ]]; then
     rm -rf "$tmpdir"
     echo "Supabase CLI archive did not contain 'supabase' binary" >&2
     return 1
   fi
 
   rm -f "$bin_dir/supabase"
-  mv "$tmpdir/supabase" "$bin_dir/supabase"
+  mv "$extracted_supabase" "$bin_dir/supabase"
   chmod +x "$bin_dir/supabase"
   printf '%s' "$desired_version" >"$version_file"
 
