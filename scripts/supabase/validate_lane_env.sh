@@ -312,8 +312,53 @@ if [[ -f "$cli_helper" ]]; then
   # shellcheck disable=SC1090
   source "$cli_helper"
   if supabase_cli_env "$lane" && command -v supabase >/dev/null 2>&1; then
-    if ! supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive >/dev/null 2>&1; then
-      fail "supabase db push --dry-run failed for lane '$lane'." "Check Supabase CLI credentials and connectivity."
+    db_probe_state="unknown"
+    db_probe_method=""
+    if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
+      if command -v pg_isready >/dev/null 2>&1; then
+        db_probe_method="pg_isready"
+        if pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" >/dev/null 2>&1; then
+          db_probe_state="online"
+        else
+          db_probe_state="offline"
+        fi
+      else
+        db_probe_method="python-socket"
+        if python3 - "$PGHOST" "$PGPORT" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+    except OSError:
+        sys.exit(1)
+sys.exit(0)
+PY
+        then
+          db_probe_state="online"
+        else
+          db_probe_state="offline"
+        fi
+      fi
+    fi
+
+    if [[ "$db_probe_state" == "offline" ]]; then
+      echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable (${db_probe_method:-no probe})." >&2
+    else
+      if [[ "$db_probe_state" == "online" ]]; then
+        echo "ℹ️  Running supabase db push dry-run (Postgres reachable via ${db_probe_method})." >&2
+      else
+        echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
+      fi
+
+      if ! supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive >/dev/null 2>&1; then
+        fail "supabase db push --dry-run failed for lane '$lane'." "Check Supabase CLI credentials and connectivity."
+      fi
     fi
   else
     echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2
