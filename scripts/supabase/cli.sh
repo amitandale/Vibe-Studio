@@ -247,6 +247,9 @@ PY
 )
   fi
   export SUPABASE_DB_URL="$db_url"
+  if [[ "$SUPABASE_DB_URL" == *"sslmode=disable"* ]]; then
+    export PGSSLMODE=disable
+  fi
 
   local lane_config="$__supabase_cli_root/supabase/config.${lane}.toml"
   if [[ ! -f "$lane_config" ]]; then

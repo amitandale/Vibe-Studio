@@ -376,12 +376,17 @@ PY
       echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
       supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
       set +e
-      supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
+      PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
       supabase_status=${PIPESTATUS[0]}
       set -e
       if (( supabase_status != 0 )); then
         if [[ ! -s "$supabase_log_tmp" ]]; then
           echo "‼️  Supabase CLI produced no output." >&2
+        fi
+        if grep -qi 'tls error' "$supabase_log_tmp"; then
+          echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
+          echo "    Ensure SUPABASE_DB_URL includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
+          echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
         fi
         rm -f "$supabase_log_tmp"
         echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2

@@ -78,4 +78,4 @@ echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
 
 args=("supabase" "db" "$action" "--db-url" "$SUPABASE_DB_URL")
 
-"${args[@]}"
+PGSSLMODE="${PGSSLMODE:-disable}" "${args[@]}"

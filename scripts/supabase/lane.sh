@@ -1048,7 +1048,7 @@ check_pg_login() {
     local cli_output cli_status
     set +e
     echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
-    cli_output=$(supabase db push --db-url "$SUPABASE_DB_URL" --dry-run 2>&1)
+    cli_output=$(PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run 2>&1)
     cli_status=$?
     set -e
     pg_probe_last_origin="supabase-cli"
