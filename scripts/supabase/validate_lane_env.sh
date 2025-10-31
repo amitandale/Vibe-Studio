@@ -317,14 +317,20 @@ if [[ -f "$cli_helper" ]]; then
     if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
       if command -v pg_isready >/dev/null 2>&1; then
         db_probe_method="pg_isready"
-        if pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" >/dev/null 2>&1; then
+        set +e
+        pg_isready_output=$(pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" 2>&1)
+        pg_isready_status=$?
+        set -e
+        if (( pg_isready_status == 0 )); then
           db_probe_state="online"
         else
           db_probe_state="offline"
+          db_probe_details="$pg_isready_output"
         fi
       else
         db_probe_method="python-socket"
-        if python3 - "$PGHOST" "$PGPORT" <<'PY'
+        set +e
+        python_output=$(python3 - "$PGHOST" "$PGPORT" <<'PY'
 import socket
 import sys
 
@@ -335,20 +341,30 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.settimeout(3)
     try:
         sock.connect((host, port))
-    except OSError:
+    except OSError as exc:
+        print(f"tcp connection failed: {exc}", file=sys.stderr)
         sys.exit(1)
 sys.exit(0)
 PY
-        then
+)
+        python_status=$?
+        set -e
+        if (( python_status == 0 )); then
           db_probe_state="online"
         else
           db_probe_state="offline"
+          db_probe_details="$python_output"
         fi
       fi
     fi
 
     if [[ "$db_probe_state" == "offline" ]]; then
-      echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable (${db_probe_method:-no probe})." >&2
+      echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable via ${db_probe_method:-no probe}." >&2
+      if [[ -n "${db_probe_details:-}" ]]; then
+        while IFS= read -r line; do
+          echo "    ${line}" >&2
+        done <<<"${db_probe_details}"
+      fi
     else
       if [[ "$db_probe_state" == "online" ]]; then
         echo "ℹ️  Running supabase db push dry-run (Postgres reachable via ${db_probe_method})." >&2
@@ -356,8 +372,21 @@ PY
         echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
       fi
 
-      if ! supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive >/dev/null 2>&1; then
-        fail "supabase db push --dry-run failed for lane '$lane'." "Check Supabase CLI credentials and connectivity."
+      supabase_cmd=(
+        supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive
+      )
+      set +e
+      supabase_output="$(${supabase_cmd[@]} 2>&1)"
+      supabase_status=$?
+      set -e
+      if (( supabase_status != 0 )); then
+        echo "‼️  Supabase CLI dry-run output (exit code ${supabase_status}):" >&2
+        if [[ -n "$supabase_output" ]]; then
+          printf '%s\n' "$supabase_output" >&2
+        else
+          echo "    <no output>" >&2
+        fi
+        fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
       fi
     fi
   else
