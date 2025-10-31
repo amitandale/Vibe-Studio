@@ -20,6 +20,83 @@ fi
 
 lane="${1:?lane}"; cmd="${2:?start|stop|restart|db-only|db-health|health|status}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+cli_helper="$root/scripts/supabase/cli.sh"
+supabase_cli_ready=false
+workdir_path="$(pwd)"
+workdir_mode_snapshot=""
+workdir_owner_snapshot=""
+
+supabase_lane_stat_mode() {
+  local path="$1" value
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    value=$(python3 -c 'import os, stat, sys
+path = sys.argv[1]
+try:
+    mode = os.stat(path).st_mode
+except FileNotFoundError:
+    sys.exit(1)
+
+print(oct(stat.S_IMODE(mode))[2:])' "$path") || return 1
+    printf '%s' "$value"
+    return 0
+  fi
+  if value=$(stat -c '%a' "$path" 2>/dev/null); then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+supabase_lane_stat_owner() {
+  local path="$1" value
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    value=$(python3 -c 'import os, sys
+path = sys.argv[1]
+try:
+    st = os.stat(path)
+except FileNotFoundError:
+    sys.exit(1)
+
+print(f"{st.st_uid}:{st.st_gid}")' "$path") || return 1
+    printf '%s' "$value"
+    return 0
+  fi
+  if value=$(stat -c '%u:%g' "$path" 2>/dev/null); then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+if [[ -d "$workdir_path" ]]; then
+  workdir_mode_snapshot="$(supabase_lane_stat_mode "$workdir_path" 2>/dev/null || true)"
+  workdir_owner_snapshot="$(supabase_lane_stat_owner "$workdir_path" 2>/dev/null || true)"
+fi
+
+restore_workdir_access() {
+  local path="$workdir_path"
+  if [[ -z "$path" || ! -d "$path" ]]; then
+    return
+  fi
+
+  if [[ -n "$workdir_mode_snapshot" ]]; then
+    chmod "$workdir_mode_snapshot" "$path" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$workdir_owner_snapshot" ]]; then
+    if chown "$workdir_owner_snapshot" "$path" >/dev/null 2>&1; then
+      :
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo chown "$workdir_owner_snapshot" "$path" >/dev/null 2>&1 || true
+    fi
+  fi
+}
 official_docker_dir="$root/ops/supabase/lanes/latest-docker"
 official_compose="$official_docker_dir/docker-compose.yml"
 official_env_template="$official_docker_dir/.env.example"
@@ -67,6 +144,7 @@ cleanup() {
   for file in "${cleanup_envfiles[@]}"; do
     [[ -f "$file" ]] && rm -f "$file"
   done
+  restore_workdir_access
 }
 trap cleanup EXIT
 
@@ -219,25 +297,32 @@ prepare_envfile() {
     exit 1
   fi
 
+  if [[ -z "$host_port" ]]; then
+    if [[ -n "$pg_port" ]]; then
+      host_port="$pg_port"
+    else
+      host_port="5432"
+    fi
+  fi
+
   if [[ -z "$pg_port" ]]; then
     pg_port="5432"
   fi
-  if [[ -z "$host_port" ]]; then
-    host_port="$pg_port"
-  fi
 
-  add_or_update_kv env_map key_order PGPORT "5432"
+  add_or_update_kv env_map key_order PGPORT "$host_port"
   add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  add_or_update_kv env_map key_order PGPASSWORD "$injected_pg_password"
-  add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "$injected_super_role"
-  add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
+  if [[ -z "${env_map[PGPASSWORD]:-}" && -n "$injected_super_password" ]]; then
+    add_or_update_kv env_map key_order PGPASSWORD "$injected_super_password"
+  fi
+
+  add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "${env_map[SUPABASE_SUPER_ROLE]:-$injected_super_role}"
+  if [[ -z "${env_map[SUPABASE_SUPER_PASSWORD]:-}" && -n "$injected_super_password" ]]; then
+    add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
+  fi
 
   if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
     add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"
-  fi
-  if [[ -n "${env_map[PGUSER]:-}" ]]; then
-    add_or_update_kv env_map key_order POSTGRES_USER "${env_map[PGUSER]}"
   fi
   add_or_update_kv env_map key_order POSTGRES_PASSWORD "$injected_pg_password"
   add_or_update_kv env_map key_order POSTGRES_HOST "db"
@@ -329,6 +414,20 @@ source_lane_env() {
   fi
 }
 source_lane_env "$envfile"
+# Prepare Supabase CLI context for database-aware commands.
+if [[ ! -f "$cli_helper" ]]; then
+  echo "❌ Supabase CLI helper missing at $cli_helper" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$cli_helper"
+
+if ! supabase_cli_env "$lane"; then
+  echo "❌ Unable to prepare Supabase CLI environment for lane '$lane'" >&2
+  exit 1
+fi
+supabase_cli_ready=true
 # The deploy workflow runs `docker compose pull` using the same compose directory and
 # lane env file immediately before invoking this helper, so all commands below assume
 # Supabase images are already refreshed to match the upstream compose definition.
@@ -399,7 +498,7 @@ persist_lane_env_value() {
 
 resolve_compose_service_port() {
   local svc="$1"
-  local container_port="${2:-${PGPORT:-5432}}"
+  local container_port="${2:-${POSTGRES_PORT:-5432}}"
 
   local output
   output=$("${compose_cmd[@]}" port "$svc" "$container_port" 2>/dev/null || true)
@@ -428,7 +527,7 @@ sync_pg_host_port_with_compose() {
   if ! resolved_port=$(resolve_compose_service_port db); then
     {
       echo "⚠️  Unable to determine published Postgres port from docker compose for lane '$lane'."
-      echo "   Command: docker compose port db ${PGPORT:-5432}"
+      echo "   Command: docker compose port db ${POSTGRES_PORT:-5432}"
       echo "   Falling back to PGHOST_PORT=${pg_host_port} from env file."
     } >&2
     return 1
@@ -945,6 +1044,20 @@ check_pg_login() {
     return 1
   fi
 
+  if [[ "$supabase_cli_ready" == true ]]; then
+    local cli_output cli_status
+    set +e
+    cli_output=$(supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive 2>&1)
+    cli_status=$?
+    set -e
+    pg_probe_last_origin="supabase-cli"
+    pg_probe_last_status=$cli_status
+    pg_probe_last_output="$cli_output"
+    if [[ $cli_status -eq 0 ]]; then
+      return 0
+    fi
+  fi
+
   pg_probe_last_host_attempted=0
 
   if [[ -n "$psql_bin" ]]; then
@@ -1193,7 +1306,7 @@ diagnose_pg_failure() {
 
   {
     echo "❌ [$context] Unable to connect to Postgres for Supabase lane '$lane'."
-    echo "   Host: ${local_pg_host}  Port: ${pg_host_port:-<unset>} (container: ${PGPORT:-<unset>})  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
+    echo "   Host: ${local_pg_host}  Port: ${pg_host_port:-<unset>} (container: ${POSTGRES_PORT:-<unset>})  Database: ${PGDATABASE:-<unset>}  Role: ${PGUSER:-<unset>}"
     if [[ -n "$pg_probe_last_host_output" ]]; then
       echo "   Last host pg_isready exit code ${pg_probe_last_host_status:-?}:"
       printf '%s\n' "$pg_probe_last_host_output" | indent_lines '      '
@@ -1248,7 +1361,7 @@ status_env_snapshot() {
         echo "   Env file: $envfile"
       fi
     fi
-    echo "   Postgres host: ${PGHOST:-<unset>}  container port: ${PGPORT:-<unset>}  published port: ${PGHOST_PORT:-<unset>}"
+    echo "   Postgres host: ${PGHOST:-<unset>}  container port: ${POSTGRES_PORT:-<unset>}  published port: ${PGHOST_PORT:-<unset>}"
     echo "   Kong HTTP port: ${KONG_HTTP_PORT:-<unset>}"
     echo "   Edge runtime port: ${EDGE_PORT:-<unset>}"
     echo "   Edge env file: ${EDGE_ENV_FILE:-<unset>}"

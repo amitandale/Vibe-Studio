@@ -43,6 +43,7 @@ require_cmd() {
 }
 
 require_cmd openssl
+require_cmd python3
 
 force=false
 pg_password=""
@@ -82,6 +83,45 @@ done
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 lanes_dir="$root/ops/supabase/lanes"
 mkdir -p "$lanes_dir"
+
+lib_env_helpers="$root/scripts/supabase/lib/env.sh"
+if [[ -f "$lib_env_helpers" ]]; then
+  # shellcheck disable=SC1090
+  source "$lib_env_helpers"
+fi
+
+if ! declare -f supabase_build_db_url >/dev/null 2>&1; then
+  supabase_build_db_url() {
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import sys
+from urllib.parse import quote
+
+def encode(value: str) -> str:
+    return quote(value, safe="")
+
+user = encode(sys.argv[1]) if sys.argv[1] else ""
+password = sys.argv[2]
+host = sys.argv[3]
+port = sys.argv[4]
+database = encode(sys.argv[5]) if sys.argv[5] else ""
+
+auth = ""
+if user:
+    if password:
+        auth = f"{user}:{encode(password)}@"
+    else:
+        auth = f"{user}@"
+elif password:
+    auth = f":{encode(password)}@"
+
+endpoint = host
+if port:
+    endpoint = f"{host}:{port}"
+
+print(f"postgresql://{auth}{endpoint}/{database}")
+PY
+  }
+fi
 
 lane_upper="${lane^^}"
 
@@ -200,12 +240,6 @@ if [[ -z "$pg_super_password" && -n "$credentials_super_password" ]]; then
   pg_super_password="$credentials_super_password"
 fi
 
-if [[ -z "$pg_super_password" ]]; then
-  echo "Supabase superuser password for lane '$lane' is missing." >&2
-  echo "Define ${lane_upper}_SUPER_PASSWORD in $credentials_file or pass --pg-super-password." >&2
-  exit 1
-fi
-
 if [[ "$pg_super_password_override" == true || "$pg_super_password" != "${credentials_super_password}" ]]; then
   update_credentials_file "${lane_upper}_SUPER_PASSWORD" "$pg_super_password"
 fi
@@ -298,11 +332,11 @@ set_env "VOL_NS" "$lane"
 set_env "ENV_FILE" "$working_env_file"
 
 set_env "PGHOST" "127.0.0.1"
-set_env "PGPORT" "$pg_container_port"
+set_env "PGPORT" "$pg_host_port"
 set_env "PGHOST_PORT" "$pg_host_port"
 set_env "PGDATABASE" "$pg_db"
-set_env "PGUSER" "postgres"
-set_env "PGPASSWORD" "$pg_password"
+set_env "PGUSER" "$pg_super_role"
+set_env "PGPASSWORD" "$pg_super_password"
 
 set_env "SUPABASE_SUPER_ROLE" "$pg_super_role"
 set_env "SUPABASE_SUPER_PASSWORD" "$pg_super_password"
@@ -334,6 +368,13 @@ set_env "SUPABASE_PUBLIC_URL" "$(ensure_existing_or_default SUPABASE_PUBLIC_URL 
 set_env "SUPABASE_URL" "$(ensure_existing_or_default SUPABASE_URL "$site_url_default")"
 set_env "API_EXTERNAL_URL" "$(ensure_existing_or_default API_EXTERNAL_URL "$site_url_default")"
 set_env "DOCKER_SOCKET_LOCATION" "$(ensure_existing_or_default DOCKER_SOCKET_LOCATION "/var/run/docker.sock")"
+
+if ! db_url="$(supabase_build_db_url "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db")"; then
+  echo "Failed to construct SUPABASE_DB_URL; verify python3 is installed." >&2
+  exit 1
+fi
+set_env "SUPABASE_DB_URL" "$db_url"
+set_env "SUPABASE_PROJECT_REF" "$(ensure_existing_or_default SUPABASE_PROJECT_REF "$lane")"
 
 set_env "LOGFLARE_PUBLIC_ACCESS_TOKEN" "$logflare_public"
 set_env "LOGFLARE_PRIVATE_ACCESS_TOKEN" "$logflare_private"
@@ -375,9 +416,9 @@ set_env "DASHBOARD_USERNAME" "$dashboard_user"
 set_env "DASHBOARD_PASSWORD" "$dashboard_password"
 
 required_non_empty=(
-  COMPOSE_PROJECT_NAME LANE VOL_NS PGHOST PGPORT PGHOST_PORT PGDATABASE PGUSER PGPASSWORD
+  COMPOSE_PROJECT_NAME LANE VOL_NS PGHOST PGPORT PGHOST_PORT PGDATABASE PGUSER
   POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_PASSWORD
-  SUPABASE_SUPER_ROLE SUPABASE_SUPER_PASSWORD
+  SUPABASE_SUPER_ROLE
   JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SUPABASE_ANON_KEY SUPABASE_SERVICE_KEY
   PG_META_CRYPTO_KEY SECRET_KEY_BASE VAULT_ENC_KEY
   KONG_HTTP_PORT KONG_HTTPS_PORT EDGE_PORT EDGE_ENV_FILE
@@ -385,6 +426,7 @@ required_non_empty=(
   DOCKER_SOCKET_LOCATION LOGFLARE_PUBLIC_ACCESS_TOKEN LOGFLARE_PRIVATE_ACCESS_TOKEN
   SMTP_HOST SMTP_PORT SMTP_ADMIN_EMAIL SMTP_SENDER_NAME
   DASHBOARD_USERNAME DASHBOARD_PASSWORD
+  SUPABASE_DB_URL SUPABASE_PROJECT_REF
 )
 
 missing=()
