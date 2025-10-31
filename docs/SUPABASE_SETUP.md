@@ -142,7 +142,15 @@ stored roles using those credentials before migrations run, so the lane is heale
 - **`role "<pg-user>" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper expects the stored secrets to match the database before re-running the deploy.
 - **Kong not healthy**: Review logs via `docker compose --project-directory ops/supabase/lanes/latest-docker -f ops/supabase/lanes/latest-docker/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
-- **`tls error (server refused TLS connection)` during `supabase db push`**: Ensure the lane connection string ends with `?sslmode=disable` and that the Postgres container allows plaintext connections. If the error persists, it usually means the Postgres data directory permissions or superuser password drifted. Run `docker exec -it supabase-db bash -c 'chown -R postgres:postgres /var/lib/postgresql/data'` followed by `docker restart supabase-db`, then reset the Supabase admin password inside the container (`psql -d <db> -c "ALTER USER supabase_admin WITH PASSWORD '<password-from-credentials.env>'"`). Re-run the deploy after the credentials and permissions are back in sync.
+- **`tls error (server refused TLS connection)` or `could not open file "global/pg_filenode.map": Permission denied` during `supabase db push`**: Ensure the lane connection string ends with `?sslmode=disable` and that the Postgres container allows plaintext connections. If the error persists, the Supabase database volume permissions or superuser password have likely drifted. Run the following from the lane checkout:
+
+  ```bash
+  docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data
+  docker compose --profile db-only restart db
+  docker compose --profile db-only exec db psql -U postgres -d "${PGDATABASE:-postgres}" -c "ALTER USER supabase_admin WITH PASSWORD '<password-from-credentials.env>'"
+  ```
+
+  After the container restarts, update `${LANE^^}_PG_PASSWORD` in `ops/supabase/lanes/credentials.env` if it changed and re-run the deploy.
 
 ## 📚 References
 

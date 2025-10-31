@@ -388,6 +388,13 @@ PY
           echo "    Ensure SUPABASE_DB_URL includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
           echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
         fi
+
+        if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
+          echo "‼️  Supabase CLI could not read Postgres data files due to permission issues." >&2
+          echo "    Run 'docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data' on the runner," >&2
+          echo "    then restart the container with 'docker compose --profile db-only restart db'." >&2
+          echo "    If credentials were reset inside the container, update ${lane^^}_PG_PASSWORD in ops/supabase/lanes/credentials.env." >&2
+        fi
         rm -f "$supabase_log_tmp"
         echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
         fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
