@@ -1047,7 +1047,7 @@ check_pg_login() {
   if [[ "$supabase_cli_ready" == true ]]; then
     local cli_output cli_status
     set +e
-    cli_output=$(supabase --config "$SUPABASE_CONFIG_PATH" db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive 2>&1)
+    cli_output=$(supabase db push --db-url "$SUPABASE_DB_URL" --dry-run --non-interactive 2>&1)
     cli_status=$?
     set -e
     pg_probe_last_origin="supabase-cli"

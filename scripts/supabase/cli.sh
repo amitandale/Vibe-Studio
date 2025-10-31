@@ -179,29 +179,8 @@ supabase_cli_require() {
   local bin="$1" lane="${2:-${LANE:-default}}"
 
   if [[ "$bin" == "supabase" ]]; then
-    local desired_version="$__supabase_cli_default_version"
-    local current_version="" bootstrap_needed=0
-
-    if command -v supabase >/dev/null 2>&1; then
-      local version_output
-      if version_output="$(supabase --version 2>/dev/null)"; then
-        current_version="$(printf '%s' "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
-      fi
-      if [[ "$current_version" != "$desired_version" ]]; then
-        bootstrap_needed=1
-      fi
-    else
-      bootstrap_needed=1
-    fi
-
-    if (( bootstrap_needed )); then
-      supabase_cli_bootstrap "$lane" || return 1
-    else
-      local lane_bin_dir
-      lane_bin_dir="$(supabase_cli_bin_dir "$lane")"
-      PATH="$lane_bin_dir:$PATH"
-      export PATH
-    fi
+    supabase_cli_bootstrap "$lane" || return 1
+    hash -r 2>/dev/null || true
   fi
 
   if command -v "$bin" >/dev/null 2>&1; then
@@ -292,11 +271,7 @@ PY
 supabase_cli_exec() {
   local lane="${1:?lane}"; shift
   supabase_cli_env "$lane"
-  local args=("supabase" "--config" "$SUPABASE_CONFIG_PATH")
-  if [[ $# -gt 0 ]]; then
-    args+=("$@")
-  fi
-  exec "${args[@]}"
+  exec supabase "$@"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
