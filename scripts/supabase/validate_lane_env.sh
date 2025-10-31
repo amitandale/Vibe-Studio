@@ -373,22 +373,21 @@ PY
       fi
 
       echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
-      supabase_cmd=(
-        supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
-      )
+      echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
+      supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
       set +e
-      supabase_output="$(${supabase_cmd[@]} 2>&1)"
-      supabase_status=$?
+      supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
+      supabase_status=${PIPESTATUS[0]}
       set -e
       if (( supabase_status != 0 )); then
-        echo "‼️  Supabase CLI dry-run output (exit code ${supabase_status}):" >&2
-        if [[ -n "$supabase_output" ]]; then
-          printf '%s\n' "$supabase_output" >&2
-        else
-          echo "    <no output>" >&2
+        if [[ ! -s "$supabase_log_tmp" ]]; then
+          echo "‼️  Supabase CLI produced no output." >&2
         fi
+        rm -f "$supabase_log_tmp"
+        echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
         fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
       fi
+      rm -f "$supabase_log_tmp"
     fi
   else
     echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2
