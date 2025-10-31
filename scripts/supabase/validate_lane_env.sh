@@ -164,7 +164,7 @@ fi
 
 expected_db_url=""
 if [[ -n "${PGHOST:-}" && -n "${PGPORT:-${PGHOST_PORT:-}}" && -n "${PGUSER:-}" && -n "${PGDATABASE:-}" ]]; then
-  if ! expected_db_url="$(supabase_build_db_url "${PGUSER}" "${PGPASSWORD:-}" "${PGHOST}" "${PGPORT}" "${PGDATABASE}")"; then
+  if ! expected_db_url="$(supabase_build_db_url "${PGUSER}" "${PGPASSWORD:-}" "${PGHOST}" "${PGPORT}" "${PGDATABASE}" "sslmode=disable")"; then
     fail "Unable to construct SUPABASE_DB_URL from lane metadata." "Check PGHOST/PGPORT/PGUSER/PGDATABASE values."
   fi
 fi

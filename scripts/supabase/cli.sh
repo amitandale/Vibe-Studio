@@ -206,12 +206,12 @@ supabase_cli_env() {
 
   local db_url="${SUPABASE_DB_URL:-}" expected_db_url=""
   if command -v python3 >/dev/null 2>&1 && declare -f supabase_build_db_url >/dev/null 2>&1; then
-    expected_db_url="$(supabase_build_db_url "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}")"
+    expected_db_url="$(supabase_build_db_url "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}" "sslmode=disable")"
   fi
   if [[ -n "$expected_db_url" ]]; then
     db_url="$expected_db_url"
   elif [[ -z "$db_url" ]]; then
-    db_url=$(python3 - <<'PY' "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}"
+    db_url=$(python3 - <<'PY' "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}" "sslmode=disable"
 import sys
 from urllib.parse import quote
 
@@ -223,6 +223,7 @@ password = sys.argv[2]
 host = sys.argv[3]
 port = sys.argv[4]
 database = encode(sys.argv[5]) if sys.argv[5] else ""
+query = sys.argv[6] if len(sys.argv) > 6 else ""
 
 auth = ""
 if user:
@@ -237,7 +238,11 @@ endpoint = host
 if port:
     endpoint = f"{host}:{port}"
 
-print(f"postgresql://{auth}{endpoint}/{database}")
+if query:
+    if not query.startswith("?"):
+        query = f"?{query}"
+
+print(f"postgresql://{auth}{endpoint}/{database}{query}")
 PY
 )
   fi

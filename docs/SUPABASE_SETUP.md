@@ -50,8 +50,11 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 
 `ops/supabase/lanes/credentials.env` is still the canonical location for lane database
 passwords, but the Supabase CLI now reads every credential directly from the hydrated
-lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` and the
-automation feeds it straight into `supabase db` and `supabase functions` commands.
+lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` (including
+`?sslmode=disable` for local runners) and the automation feeds it straight into
+`supabase db` and `supabase functions` commands. Local Postgres containers ship with
+TLS disabled, so the helper explicitly opts out of SSL to prevent the Supabase CLI from
+attempting a TLS handshake that will be refused.
 
 Because the CLI wrapper exports lane credentials on demand, helpers no longer rewrite
 `PGPASSWORD` into temporary files. You can operate in passwordless or password-backed
