@@ -147,6 +147,29 @@ attempt_supabase_permission_repair() {
   fi
 
   if [[ -n "$desired_password" ]]; then
+    local readiness_attempt=0
+    local readiness_status=1
+    local readiness_output=""
+    while (( readiness_attempt < 15 )); do
+      set +e
+      readiness_output=$("${compose_db[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d postgres -U postgres 2>&1)
+      readiness_status=$?
+      set -e
+      if (( readiness_status == 0 )); then
+        break
+      fi
+      sleep 2
+      ((readiness_attempt++))
+    done
+
+    if (( readiness_status != 0 )); then
+      echo "❌ Postgres never became ready to reset the Supabase superuser password." >&2
+      if [[ -n "$readiness_output" ]]; then
+        printf '    %s\n' "$readiness_output" >&2
+      fi
+      return "$readiness_status"
+    fi
+
     if ! escaped_password=$(python3 - "$desired_password" <<'PY'
 import sys
 value = sys.argv[1]
@@ -161,8 +184,9 @@ PY
       status=$?
       set -e
       if (( status != 0 )); then
-        echo "⚠️  Failed to align Supabase superuser password with stored credentials; continuing without password reset." >&2
+        echo "❌ Failed to align Supabase superuser password with stored credentials during automatic repair." >&2
         [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+        return "$status"
       fi
     fi
   fi
