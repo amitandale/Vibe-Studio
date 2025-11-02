@@ -50,16 +50,20 @@ Volumes follow the pattern `supa-<lane>-db` and Compose project names default to
 
 `ops/supabase/lanes/credentials.env` is still the canonical location for lane database
 passwords, but the Supabase CLI now reads every credential directly from the hydrated
-lane env. Provisioning records the lane connection string as `SUPABASE_DB_URL` (including
-`?sslmode=disable` for local runners) and the automation feeds it straight into
-`supabase db` and `supabase functions` commands. Local Postgres containers ship with
-TLS disabled, so the helper explicitly opts out of SSL to prevent the Supabase CLI from
-attempting a TLS handshake that will be refused.
+lane env. Provisioning records two connection strings:
 
-Because the CLI wrapper exports lane credentials on demand, helpers no longer rewrite
-`PGPASSWORD` into temporary files. You can operate in passwordless or password-backed
-modes by editing `ops/supabase/lanes/<lane>.env` directly or rotating the entries in
-`credentials.env` and regenerating the lane env file.
+- `SUPABASE_DB_URL` — consumed by Supabase services and built from the lane’s
+  `PGUSER` (typically `supabase_admin`).
+- `SUPABASE_CLI_DB_URL` — used exclusively by automation and built from the
+  container superuser (`POSTGRES_USER`/`POSTGRES_PASSWORD`).
+
+Both URLs include `?sslmode=disable` for local runners so the CLI connects over
+plaintext TCP instead of attempting a TLS handshake that the container will
+refuse. Because the CLI wrapper exports lane credentials on demand, helpers no
+longer rewrite `PGPASSWORD` into temporary files. You can operate in
+password-backed or trust-based modes by editing `ops/supabase/lanes/<lane>.env`
+directly or rotating the entries in `credentials.env` and regenerating the lane
+env file.
 
 ## 🚀 Initial Setup Steps
 
@@ -71,7 +75,7 @@ modes by editing `ops/supabase/lanes/<lane>.env` directly or rotating the entrie
    The reference tag or commit is stored in `ops/supabase/SUPABASE_DOCKER_REF`. When you need to upgrade Supabase, update that file to the desired tag, rerun the sync script, review the resulting diff (including `ops/supabase/lanes/latest-docker`), and commit the changes. The automation refuses to run if the directory or either file is missing, keeping the single source of truth anchored to the pinned Supabase release.
    During deploys the workflow automatically refreshes the referenced images with `docker compose --project-directory ops/supabase/lanes/latest-docker --env-file ops/supabase/lanes/<lane>.env -f ops/supabase/lanes/latest-docker-compose.yml pull` before services start, so keeping the synced directory up to date with the pinned release is enough to track upstream updates.
 3. **Provision lane environment files** (CI will also auto-provision on first run once the credentials are present):
-   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow can reuse. You can leave the superuser password blank when the database trusts passwordless connections; the provisioning helper will still emit a usable `SUPABASE_DB_URL` for the CLI.
+   - Review or edit `ops/supabase/lanes/credentials.env`. Each lane entry defines the Postgres password plus the fallback Supabase admin role/password that the workflow can reuse. You can leave the Supabase admin password blank when the database trusts passwordless connections; the provisioning helper will still emit a usable `SUPABASE_CLI_DB_URL` that authenticates as the Postgres superuser for automation.
    - Generate the per-lane env files (non-secret settings) straight from those committed credentials:
      ```bash
      ./scripts/supabase/provision_lane_env.sh main --pg-super-role supabase_admin
@@ -142,12 +146,12 @@ stored roles using those credentials before migrations run, so the lane is heale
 - **`role "<pg-user>" does not exist` during deploy**: Supply the superuser credentials with `--pg-super-role/--pg-super-password` (or update `credentials.env`) and rerun the provisioning script so the workflow can recreate the missing lane role automatically. The helper expects the stored secrets to match the database before re-running the deploy.
 - **Kong not healthy**: Review logs via `docker compose --project-directory ops/supabase/lanes/latest-docker -f ops/supabase/lanes/latest-docker/docker-compose.yml logs kong` with the lane env sourced.
 - **Migrations stuck**: Check for lingering advisory locks with `SELECT pg_advisory_unlock_all();` in `psql`.
-- **`tls error (server refused TLS connection)` or `could not open file "global/pg_filenode.map": Permission denied` during `supabase db push`**: Ensure the lane connection string ends with `?sslmode=disable` so the CLI negotiates plaintext connections to the local Postgres instance. The deploy workflow now waits for Postgres to accept connections, repairs the Supabase database volume permissions, and resets the lane superuser password automatically when it encounters this error. When Supabase refuses to modify a reserved role (for example `supabase_admin`), the workflow logs a warning and continues after fixing permissions. If the automated recovery still fails, run the following commands from the lane checkout as a manual fallback and re-run the workflow:
+- **`tls error (server refused TLS connection)` or `could not open file "global/pg_filenode.map": Permission denied` during `supabase db push`**: Ensure the Supabase CLI connection string (`SUPABASE_CLI_DB_URL`) ends with `?sslmode=disable` so the CLI negotiates plaintext connections to the local Postgres instance. The deploy workflow now waits for Postgres to accept connections, repairs the Supabase database volume permissions, and retries migrations using the Postgres superuser defined by `POSTGRES_USER`/`POSTGRES_PASSWORD`. If the automated recovery still fails, run the following commands from the lane checkout as a manual fallback and re-run the workflow:
 
   ```bash
   docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data
   docker compose --profile db-only restart db
-  docker compose --profile db-only exec db psql -U postgres -d "${PGDATABASE:-postgres}" -c "ALTER USER supabase_admin WITH PASSWORD '<password-from-credentials.env>'"
+  docker compose --profile db-only exec db psql -U postgres -d postgres -c "ALTER USER ${POSTGRES_USER:-postgres} WITH PASSWORD '<POSTGRES_PASSWORD value from credentials.env>'"
   ```
 
 ## 📚 References

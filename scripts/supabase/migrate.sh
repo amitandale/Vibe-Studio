@@ -74,8 +74,13 @@ if [[ "$reset" == true ]]; then
 fi
 
 echo "ℹ️  Running supabase db $action for lane '$lane' (config: $SUPABASE_CONFIG_PATH)" >&2
-echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
+cli_db_url="${SUPABASE_CLI_DB_URL:-$SUPABASE_DB_URL}"
+cli_db_label="SUPABASE_DB_URL"
+if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
+  cli_db_label="SUPABASE_CLI_DB_URL"
+fi
+echo "ℹ️  ${cli_db_label}=${cli_db_url}" >&2
 
-args=("supabase" "db" "$action" "--db-url" "$SUPABASE_DB_URL")
+args=("supabase" "db" "$action" "--db-url" "$cli_db_url")
 
 PGSSLMODE="${PGSSLMODE:-disable}" "${args[@]}"

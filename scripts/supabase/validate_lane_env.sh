@@ -314,6 +314,41 @@ else
   fail "Unable to determine expected SUPABASE_DB_URL." "Verify PG* variables are set in $env_file."
 fi
 
+cli_expected_db_url=""
+cli_user="${POSTGRES_USER:-${PGUSER:-}}"
+cli_password="${POSTGRES_PASSWORD:-}" 
+cli_host="${PGHOST:-}" 
+cli_port="${PGPORT:-${PGHOST_PORT:-}}"
+cli_database="${PGDATABASE:-${POSTGRES_DB:-}}"
+
+if [[ -z "$cli_user" ]]; then
+  fail "Unable to determine Supabase CLI database user." "Ensure POSTGRES_USER is set in $env_file."
+fi
+
+if [[ -z "$cli_password" ]]; then
+  fail "POSTGRES_PASSWORD missing in $env_file; required for Supabase CLI automation." "Regenerate the lane env with scripts/supabase/provision_lane_env.sh $lane."
+fi
+
+if [[ -z "$cli_host" || -z "$cli_port" || -z "$cli_database" ]]; then
+  fail "Incomplete Supabase CLI connection metadata." "Verify PGHOST, PGPORT, and PGDATABASE are set in $env_file."
+fi
+
+if ! cli_expected_db_url="$(supabase_build_db_url "$cli_user" "$cli_password" "$cli_host" "$cli_port" "$cli_database" "sslmode=disable")"; then
+  fail "Unable to construct SUPABASE_CLI_DB_URL from lane metadata." "Check POSTGRES_* and PG* values."
+fi
+
+if [[ -z "$cli_expected_db_url" ]]; then
+  fail "Unable to determine expected SUPABASE_CLI_DB_URL." "Verify POSTGRES_* values are set in $env_file."
+fi
+
+if [[ "${SUPABASE_CLI_DB_URL:-}" != "$cli_expected_db_url" ]]; then
+  echo "ℹ️  Normalizing SUPABASE_CLI_DB_URL to use ${cli_user}@${cli_host}:${cli_port}." >&2
+  if ! supabase_update_env_var "$env_file" "SUPABASE_CLI_DB_URL" "$cli_expected_db_url"; then
+    fail "Failed to update SUPABASE_CLI_DB_URL in $env_file." "Ensure the file is writable by the runner."
+  fi
+fi
+SUPABASE_CLI_DB_URL="$cli_expected_db_url"
+
 assert_numeric() {
   local var_name="$1"
   local value="${!var_name:-}"
@@ -440,6 +475,75 @@ if [[ "${SUPABASE_PROJECT_REF}" != "$lane" ]]; then
   echo "⚠️  SUPABASE_PROJECT_REF (${SUPABASE_PROJECT_REF}) differs from lane '$lane'." >&2
 fi
 
+if [[ -z "${SUPABASE_CLI_DB_URL:-}" ]]; then
+  fail "SUPABASE_CLI_DB_URL missing in $env_file after normalization." "Re-run scripts/supabase/provision_lane_env.sh $lane."
+fi
+
+mapfile -t cli_db_url_parts < <(python3 - "$SUPABASE_CLI_DB_URL" <<'PY'
+import sys
+from urllib.parse import urlparse, unquote
+
+value = sys.argv[1]
+parsed = urlparse(value)
+if parsed.scheme not in {"postgresql", "postgres"}:
+    print("invalid scheme", file=sys.stderr)
+    sys.exit(1)
+
+username = parsed.username or ""
+password = parsed.password or ""
+hostname = parsed.hostname or ""
+port = parsed.port or ""
+database = parsed.path[1:] if parsed.path.startswith("/") else parsed.path
+print(unquote(username))
+print(unquote(password))
+print(hostname)
+print(str(port) if port else "")
+print(unquote(database))
+PY
+) || {
+  echo "‼️  Failed to parse SUPABASE_CLI_DB_URL='${SUPABASE_CLI_DB_URL:-<unset>}'" >&2
+  fail "SUPABASE_CLI_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+}
+
+if [[ ${#cli_db_url_parts[@]} -ne 5 ]]; then
+  echo "‼️  Unexpected parser output for SUPABASE_CLI_DB_URL='${SUPABASE_CLI_DB_URL:-<unset>}'" >&2
+  fail "SUPABASE_CLI_DB_URL is invalid." "Ensure it is a postgresql:// URL."
+fi
+
+cli_db_url_user="${cli_db_url_parts[0]}"
+cli_db_url_password="${cli_db_url_parts[1]}"
+cli_db_url_host="${cli_db_url_parts[2]}"
+cli_db_url_port="${cli_db_url_parts[3]}"
+cli_db_url_database="${cli_db_url_parts[4]}"
+
+if [[ -z "$cli_db_url_host" || -z "$cli_db_url_port" || -z "$cli_db_url_user" ]]; then
+  fail "SUPABASE_CLI_DB_URL must include user, host, and port." "Re-run provisioning so the helper can rebuild the URL."
+fi
+
+if [[ "$cli_db_url_host" != "${PGHOST}" ]]; then
+  fail "SUPABASE_CLI_DB_URL host (${cli_db_url_host}) does not match PGHOST (${PGHOST})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$cli_db_url_port" != "${PGPORT}" ]]; then
+  fail "SUPABASE_CLI_DB_URL port (${cli_db_url_port}) does not match PGPORT (${PGPORT})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$cli_db_url_database" != "${PGDATABASE}" ]]; then
+  fail "SUPABASE_CLI_DB_URL database (${cli_db_url_database}) does not match PGDATABASE (${PGDATABASE})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$cli_db_url_user" != "${cli_user}" ]]; then
+  fail "SUPABASE_CLI_DB_URL user (${cli_db_url_user}) does not match POSTGRES_USER (${cli_user})." "Update $env_file or regenerate it."
+fi
+
+if [[ "$cli_db_url_password" != "$cli_password" ]]; then
+  fail "SUPABASE_CLI_DB_URL password does not match POSTGRES_PASSWORD." "Regenerate the lane env so the CLI connection string stays aligned."
+fi
+
+if [[ "$SUPABASE_CLI_DB_URL" != *"sslmode=disable"* ]]; then
+  fail "SUPABASE_CLI_DB_URL must include '?sslmode=disable'." "Append '?sslmode=disable' to the CLI connection string and rerun provisioning."
+fi
+
 cli_helper="$root/scripts/supabase/cli.sh"
 if [[ -f "$cli_helper" ]]; then
   # shellcheck disable=SC1090
@@ -505,13 +609,18 @@ PY
         echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
       fi
 
-      echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
+      local cli_db_url_value="${SUPABASE_CLI_DB_URL:-$SUPABASE_DB_URL}"
+      local cli_db_url_label="SUPABASE_DB_URL"
+      if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
+        cli_db_url_label="SUPABASE_CLI_DB_URL"
+      fi
+      echo "ℹ️  ${cli_db_url_label}=${cli_db_url_value}" >&2
       echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
       permission_repair_attempted=false
       while true; do
         supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
         set +e
-        PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
+        PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$cli_db_url_value" --dry-run |& tee "$supabase_log_tmp" >&2
         supabase_status=${PIPESTATUS[0]}
         set -e
 
@@ -527,7 +636,7 @@ PY
         permission_issue_detected=false
         if grep -qi 'tls error' "$supabase_log_tmp"; then
           echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
-          echo "    Ensure SUPABASE_DB_URL includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
+          echo "    Ensure ${cli_db_url_label} includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
           echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
         fi
 

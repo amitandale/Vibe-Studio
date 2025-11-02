@@ -47,6 +47,24 @@ print(f"postgresql://{auth}{endpoint}/{database}{query}")
 PY
 }
 
+supabase_resolve_cli_db_url() {
+  local current_cli_url="${SUPABASE_CLI_DB_URL:-}" host="${PGHOST:-}" port="${PGPORT:-${PGHOST_PORT:-}}"
+  local user="${SUPABASE_CLI_DB_USER:-${POSTGRES_USER:-${PGUSER:-}}}"
+  local password="${SUPABASE_CLI_DB_PASSWORD:-${POSTGRES_PASSWORD:-${PGPASSWORD:-}}}"
+  local database="${SUPABASE_CLI_DB_NAME:-${PGDATABASE:-${POSTGRES_DB:-}}}"
+
+  if [[ -n "$current_cli_url" ]]; then
+    printf '%s' "$current_cli_url"
+    return 0
+  fi
+
+  if [[ -z "$host" || -z "$port" || -z "$user" || -z "$database" ]]; then
+    return 1
+  fi
+
+  supabase_build_db_url "$user" "$password" "$host" "$port" "$database" "sslmode=disable"
+}
+
 supabase_update_env_var() {
   local file="${1:?file}" key="${2:?key}" value="${3:-}"
   if ! command -v python3 >/dev/null 2>&1; then
