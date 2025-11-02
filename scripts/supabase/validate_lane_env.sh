@@ -98,6 +98,110 @@ if [[ -z "$super_password" ]]; then
   echo "⚠️  ${super_password_var} missing in credentials file; continuing under passwordless mode." >&2
 fi
 
+attempt_supabase_permission_repair() {
+  if [[ "${SUPABASE_SKIP_PERMISSION_REPAIR:-}" == "1" ]]; then
+    echo "⚠️  Automatic Supabase permission repair explicitly disabled via SUPABASE_SKIP_PERMISSION_REPAIR=1." >&2
+    return 1
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "⚠️  Docker CLI not available; cannot attempt Supabase permission repair automatically." >&2
+    return 1
+  fi
+
+  local -a compose_base=(
+    docker compose
+    --project-directory "$official_docker_dir"
+    --env-file "$env_file"
+    -f "$official_compose"
+  )
+  local -a compose_db=("${compose_base[@]}" --profile db-only)
+
+  echo "ℹ️  Attempting automatic Supabase Postgres permission repair." >&2
+
+  local output status
+
+  set +e
+  output=$("${compose_db[@]}" up -d db 2>&1)
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "❌ Failed to start Supabase db container for permission repair." >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+
+  set +e
+  output=$("${compose_db[@]}" exec -T db chown -R postgres:postgres /var/lib/postgresql/data 2>&1)
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "❌ Unable to reset Supabase Postgres data directory ownership automatically." >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+
+  local desired_password="${super_password:-}" sql escaped_password
+  if [[ -z "$desired_password" ]]; then
+    desired_password="$pg_password"
+  fi
+
+  if [[ -n "$desired_password" ]]; then
+    if ! escaped_password=$(python3 - "$desired_password" <<'PY'
+import sys
+value = sys.argv[1]
+print(value.replace("'", "''"))
+PY
+); then
+      echo "⚠️  Unable to prepare password for Supabase permission repair; skipping password reset." >&2
+    else
+      sql="ALTER ROLE \"${super_role}\" WITH PASSWORD '${escaped_password}';"
+      set +e
+      output=$("${compose_db[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d postgres -c "$sql" 2>&1)
+      status=$?
+      set -e
+      if (( status != 0 )); then
+        echo "⚠️  Failed to align Supabase superuser password with stored credentials; continuing without password reset." >&2
+        [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+      fi
+    fi
+  fi
+
+  set +e
+  output=$("${compose_db[@]}" restart db 2>&1)
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "⚠️  Supabase db restart after permission repair exited with status $status." >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+  fi
+
+  local attempts=0
+  local pg_ready_status=1
+  local pg_ready_output=""
+  while (( attempts < 10 )); do
+    set +e
+    pg_ready_output=$("${compose_db[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d "$PGDATABASE" -U postgres 2>&1)
+    pg_ready_status=$?
+    set -e
+    if (( pg_ready_status == 0 )); then
+      break
+    fi
+    sleep 2
+    ((attempts++))
+  done
+
+  if (( pg_ready_status != 0 )); then
+    echo "⚠️  Postgres did not report ready after automatic repair attempts." >&2
+    if [[ -n "$pg_ready_output" ]]; then
+      printf '    %s\n' "$pg_ready_output" >&2
+    fi
+  fi
+
+  echo "ℹ️  Automatic Supabase permission repair completed." >&2
+  return 0
+}
+
 required_vars=(
   COMPOSE_PROJECT_NAME
   LANE
@@ -374,15 +478,24 @@ PY
 
       echo "ℹ️  SUPABASE_DB_URL=${SUPABASE_DB_URL}" >&2
       echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
-      supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
-      set +e
-      PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
-      supabase_status=${PIPESTATUS[0]}
-      set -e
-      if (( supabase_status != 0 )); then
+      permission_repair_attempted=false
+      while true; do
+        supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
+        set +e
+        PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$SUPABASE_DB_URL" --dry-run |& tee "$supabase_log_tmp" >&2
+        supabase_status=${PIPESTATUS[0]}
+        set -e
+
+        if (( supabase_status == 0 )); then
+          rm -f "$supabase_log_tmp"
+          break
+        fi
+
         if [[ ! -s "$supabase_log_tmp" ]]; then
           echo "‼️  Supabase CLI produced no output." >&2
         fi
+
+        permission_issue_detected=false
         if grep -qi 'tls error' "$supabase_log_tmp"; then
           echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
           echo "    Ensure SUPABASE_DB_URL includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
@@ -390,16 +503,29 @@ PY
         fi
 
         if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
+          permission_issue_detected=true
           echo "‼️  Supabase CLI could not read Postgres data files due to permission issues." >&2
-          echo "    Run 'docker compose --profile db-only exec db chown -R postgres:postgres /var/lib/postgresql/data' on the runner," >&2
-          echo "    then restart the container with 'docker compose --profile db-only restart db'." >&2
-          echo "    If credentials were reset inside the container, update ${lane^^}_PG_PASSWORD in ops/supabase/lanes/credentials.env." >&2
         fi
+
+        if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == false ]]; then
+          if attempt_supabase_permission_repair; then
+            echo "ℹ️  Retrying supabase db push dry-run after automatic permission repair." >&2
+            permission_repair_attempted=true
+            rm -f "$supabase_log_tmp"
+            continue
+          else
+            echo "‼️  Automatic Supabase permission repair attempt failed; manual intervention required." >&2
+          fi
+        fi
+
+        if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == true ]]; then
+          echo "‼️  Automatic Supabase permission repair already attempted; skipping additional retries." >&2
+        fi
+
         rm -f "$supabase_log_tmp"
         echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
         fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
-      fi
-      rm -f "$supabase_log_tmp"
+      done
     fi
   else
     echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2
