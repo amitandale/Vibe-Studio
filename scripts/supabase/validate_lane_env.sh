@@ -184,9 +184,14 @@ PY
       status=$?
       set -e
       if (( status != 0 )); then
-        echo "❌ Failed to align Supabase superuser password with stored credentials during automatic repair." >&2
-        [[ -n "$output" ]] && printf '%s\n' "$output" >&2
-        return "$status"
+        if [[ "$output" =~ [Rr]eserved[[:space:]]+[Rr]ole ]]; then
+          echo "⚠️  Supabase refused to reset password for reserved role '${super_role}'; continuing with repaired permissions." >&2
+          [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+        else
+          echo "❌ Failed to align Supabase superuser password with stored credentials during automatic repair." >&2
+          [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+          return "$status"
+        fi
       fi
     fi
   fi
