@@ -2,6 +2,15 @@
 
 # Shared helpers for Supabase lane environment management.
 
+supabase_debug_log() {
+  local message="$1"
+  case "${SUPABASE_DEBUG:-}" in
+    1|true|TRUE|on|ON|yes|YES)
+      echo "🔎  supabase-debug: $message" >&2
+      ;;
+  esac
+}
+
 supabase_build_db_url() {
   local user="${1:-}" password="${2:-}" host="${3:-}" port="${4:-}" database="${5:-}" query="${6:-}"
   if [[ -z "$host" || -z "$database" ]]; then
@@ -102,6 +111,7 @@ supabase_resolve_cli_db_url() {
 
   if [[ -n "$super_cli_url" ]]; then
     if [[ -z "$current_cli_url" ]]; then
+      supabase_debug_log "CLI DB URL not provided; using superuser credentials for lane access"
       printf '%s' "$super_cli_url"
       return 0
     fi
@@ -111,6 +121,7 @@ supabase_resolve_cli_db_url() {
 
     if [[ "$prefer_superuser" == "1" || "$prefer_superuser" == "true" ]]; then
       if [[ -z "$current_user" || "$current_user" != "$super_user" ]]; then
+        supabase_debug_log "Overriding CLI DB URL user '${current_user:-<none>}' with superuser '$super_user'"
         printf '%s' "$super_cli_url"
         return 0
       fi
@@ -118,14 +129,17 @@ supabase_resolve_cli_db_url() {
   fi
 
   if [[ -n "$current_cli_url" ]]; then
+    supabase_debug_log "Using existing CLI DB URL without modification"
     printf '%s' "$current_cli_url"
     return 0
   fi
 
   if [[ -z "$host" || -z "$port" || -z "$user" || -z "$database" ]]; then
+    supabase_debug_log "Insufficient information to construct CLI DB URL"
     return 1
   fi
 
+  supabase_debug_log "Constructing CLI DB URL from lane defaults for user '$user'"
   supabase_build_db_url "$user" "$password" "$host" "$port" "$database" "sslmode=disable"
 }
 

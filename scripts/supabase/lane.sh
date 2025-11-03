@@ -168,9 +168,6 @@ fi
 if [[ -z "$injected_super_role" ]]; then
   injected_super_role="supabase_admin"
 fi
-if [[ "$injected_super_role" == supabase_admin_${lane} ]]; then
-  injected_super_role="supabase_admin"
-fi
 
 if [[ -z "$injected_super_password" ]]; then
   echo "${credentials_super_password_var} missing in $credentials_file; cannot continue." >&2

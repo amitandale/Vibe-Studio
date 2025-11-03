@@ -81,6 +81,13 @@ if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
 fi
 echo "ℹ️  ${cli_db_label}=${cli_db_url}" >&2
 
-args=("supabase" "db" "$action" "--db-url" "$cli_db_url" "--debug")
+args=(
+  "supabase"
+  "--config" "$SUPABASE_CONFIG_PATH"
+  "db" "$action"
+  "--db-url" "$cli_db_url"
+  "--non-interactive"
+  "--debug"
+)
 
 PGSSLMODE="${PGSSLMODE:-disable}" "${args[@]}"
