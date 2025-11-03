@@ -201,6 +201,22 @@ supabase_cli_env() {
   supabase_cli_require supabase "$lane" || return 1
   supabase_cli_require python3 "$lane" || return 1
 
+  local lane_supabase_bin=""
+  local lane_bin_dir
+  lane_bin_dir="$(supabase_cli_bin_dir "$lane")"
+  if [[ -x "$lane_bin_dir/supabase" ]]; then
+    lane_supabase_bin="$lane_bin_dir/supabase"
+  else
+    lane_supabase_bin="$(command -v supabase 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$lane_supabase_bin" ]]; then
+    echo "failed to locate Supabase CLI binary for lane '$lane'" >&2
+    return 1
+  fi
+
+  export SUPABASE_CLI_BIN="$lane_supabase_bin"
+
   # shellcheck disable=SC1090
   set -a; source "$repo_envfile"; set +a
 

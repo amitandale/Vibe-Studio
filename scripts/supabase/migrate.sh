@@ -87,16 +87,20 @@ if [[ ! -d "$supabase_project_dir" ]]; then
   exit 1
 fi
 
+supabase_bin="${SUPABASE_CLI_BIN:-supabase}"
+
 args=(
-  "supabase"
+  "$supabase_bin"
   "--workdir" "$supabase_project_dir"
   "db" "$action"
   "--db-url" "$cli_db_url"
-  "--non-interactive"
   "--debug"
 )
 
 display_args=("${args[@]}")
+if [[ ${#display_args[@]} -gt 0 ]]; then
+  display_args[0]="$(basename "${display_args[0]}")"
+fi
 for i in "${!display_args[@]}"; do
   if [[ "${display_args[$i]}" == "--db-url" && $((i + 1)) -lt ${#display_args[@]} ]]; then
     display_args[$((i + 1))]="***"
