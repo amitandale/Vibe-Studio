@@ -1,0 +1,12 @@
+[project]
+ref = "main"
+
+[db]
+url = "env(SUPABASE_DB_URL)"
+schemas = ["public", "storage", "graphql_public"]
+
+[functions]
+dir = "supabase/functions"
+
+[migrations]
+dir = "supabase/migrations"

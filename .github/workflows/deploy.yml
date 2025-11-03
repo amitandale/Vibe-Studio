@@ -29,6 +29,22 @@ jobs:
             echo "deploy_dir=${{ github.workspace }}/vibe-main" >> $GITHUB_OUTPUT
           fi
 
+      - name: Repair lane workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repair_tree() {
+            local path="$1"
+            if sudo test -d "$path"; then
+              echo "ℹ️  Repairing workspace ownership for $path"
+              sudo chown -R "$(id -u)":"$(id -g)" "$path"
+            fi
+          }
+
+          repair_tree "${{ github.workspace }}"
+          repair_tree "${{ steps.vars.outputs.deploy_dir }}"
+
       - name: Create deployment directory
         run: mkdir -p ${{ steps.vars.outputs.deploy_dir }}
 
@@ -36,6 +52,280 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ${{ steps.vars.outputs.deploy_dir }}
+
+      - name: Sync pinned Supabase docker assets
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          set -euo pipefail
+
+          scripts/supabase/sync_docker_assets.sh
+
+          ref_file="ops/supabase/SUPABASE_DOCKER_REF"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          env_template="ops/supabase/lanes/latest-docker.env"
+
+          if [[ -f "$compose_dir/.supabase_commit" ]]; then
+            commit_sha="$(<"$compose_dir/.supabase_commit")"
+            echo "Supabase docker assets pinned to commit $commit_sha (ref $(<"$ref_file"))"
+          else
+            echo "⚠️  Supabase docker assets missing commit marker; ensure sync script copied files" >&2
+          fi
+
+          echo "Compose directory: $(realpath "$compose_dir")"
+          echo "Compose file: $(realpath "$compose_file")"
+          echo "Env template: $(realpath "$env_template")"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set lane from branch
+        id: lane
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          lane=""
+          case "${GITHUB_REF_NAME}" in
+            main)
+              lane="main"
+              ;;
+            work)
+              lane="work"
+              ;;
+            codex/*)
+              lane="codex"
+              ;;
+            *)
+              echo "LANE=unknown" >> "$GITHUB_ENV"
+              exit 1
+              ;;
+          esac
+          echo "LANE=${lane}" >> "$GITHUB_ENV"
+          echo "lane=${lane}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Supabase state directory
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          state_root="${{ steps.vars.outputs.deploy_dir }}/../.supabase-state"
+          mkdir -p "$state_root/lanes"
+          chmod 700 "$state_root" "$state_root/lanes"
+          echo "SUPABASE_STATE_DIR=$state_root" >> "$GITHUB_ENV"
+
+      - name: Ensure lane environment is provisioned
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/provision_lane_env.sh "$LANE"
+
+      - name: Validate lane environment exists
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          envfile="${{ steps.vars.outputs.deploy_dir }}/ops/supabase/lanes/${LANE}.env"
+          if [ ! -s "$envfile" ]; then
+            echo "❌ Lane env file missing or empty: $envfile"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --pg-super-role supabase_admin"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
+          if ! scripts/supabase/validate_lane_env.sh "$LANE"; then
+            echo ""
+            echo "🚨 Lane environment not configured!"
+            echo ""
+            echo "To fix this, SSH to the runner and run:"
+            echo "  cd ${{ steps.vars.outputs.deploy_dir }}"
+            echo "  ./scripts/supabase/provision_lane_env.sh $LANE --pg-super-role supabase_admin"
+            echo ""
+            echo "See docs/SUPABASE_SETUP.md for complete instructions."
+            exit 1
+          fi
+
+      - name: Refresh Supabase images
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          set -euo pipefail
+
+          envfile="ops/supabase/lanes/${LANE}.env"
+          compose_dir="ops/supabase/lanes/latest-docker"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+
+          echo "ℹ️  Refreshing Supabase images"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose directory: $(realpath "$compose_dir")"
+          echo "   Compose file: $(realpath "$compose_file")"
+
+          compose_args=(
+            --project-directory "$compose_dir"
+            --env-file "$envfile"
+            -f "$compose_file"
+          )
+
+          if [[ ! -f "$envfile" ]]; then
+            echo "❌ Lane env file missing: $envfile" >&2
+            exit 1
+          fi
+
+          if [[ ! -d "$compose_dir" ]]; then
+            echo "❌ Supabase compose directory missing: $compose_dir" >&2
+            exit 1
+          fi
+
+          if [[ ! -f "$compose_file" ]]; then
+            echo "❌ Supabase compose definition missing: $compose_file" >&2
+            exit 1
+          fi
+
+          echo "ℹ️  Aligning images with $(basename "$compose_file")"
+          docker compose "${compose_args[@]}" pull
+
+          echo "ℹ️  Supabase images after pull"
+          docker compose "${compose_args[@]}" images
+
+          echo "ℹ️  Images referenced by compose definition"
+          docker compose "${compose_args[@]}" config --images
+
+      - name: Capture Supabase lane state
+        id: supabase_state
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          envfile="ops/supabase/lanes/${LANE}.env"
+          compose_file="ops/supabase/lanes/latest-docker-compose.yml"
+          echo "ℹ️  Capturing Supabase lane state"
+          echo "   Lane: $LANE"
+          echo "   Env file: $(realpath "$envfile")"
+          echo "   Compose file: $(realpath "$compose_file")"
+          if [[ ! -f "$envfile" ]]; then
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ℹ️  Invoking scripts/supabase/lane.sh $LANE status"
+          set -a
+          # shellcheck disable=SC1090
+          source "$envfile"
+          set +a
+          volume_name="supa-${VOL_NS}-db"
+          if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+            echo "volume_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "volume_present=false" >> "$GITHUB_OUTPUT"
+          fi
+          set +e
+          scripts/supabase/lane.sh "$LANE" status
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
+            echo "running=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  Supabase lane status check returned exit code $status for lane '$LANE'; continuing with phased redeploy." >&2
+          fi
+
+      - name: Stop lane services and bring DB up
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          echo "ℹ️  Preparing to stop Supabase lane services for lane $LANE"
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" ]]; then
+            echo "ℹ️  Lane $LANE previously running; invoking stop command"
+            scripts/supabase/lane.sh "$LANE" stop
+          else
+            echo "Supabase lane $LANE was not running prior to deploy; skip stop."
+          fi
+          echo "ℹ️  Starting Postgres-only mode for migrations"
+          scripts/supabase/lane.sh "$LANE" db-only
+          scripts/supabase/lane.sh "$LANE" db-health
+
+      - name: Validate Supabase db-only services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+          LANE_STATUS_REQUIRED_SERVICES: "db vector"
+        run: |
+          echo "ℹ️  Validating db-only Supabase services for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
+
+      - name: Apply DB migrations (transactional + advisory lock)
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/migrate.sh "$LANE"
+
+      - name: Start lane services
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          echo "ℹ️  Starting Supabase services for lane $LANE"
+          if [[ "${{ steps.supabase_state.outputs.running }}" == "true" || "${{ steps.supabase_state.outputs.volume_present }}" != "true" ]]; then
+            echo "ℹ️  Running scripts/supabase/lane.sh $LANE start to launch full stack"
+            scripts/supabase/lane.sh "$LANE" start
+            echo "ℹ️  scripts/supabase/lane.sh $LANE start completed"
+          else
+            echo "Supabase lane $LANE was previously stopped; removing transient db-only container."
+            scripts/supabase/lane.sh "$LANE" stop
+          fi
+
+      - name: Wait for Kong health
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        shell: bash
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          KONG_PORT=$(grep -E '^KONG_HTTP_PORT=' "ops/supabase/lanes/${LANE}.env" | cut -d= -f2)
+          ops/bin/healthwait.sh "http://127.0.0.1:${KONG_PORT}" 120
+
+      - name: Reload Edge runtime
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: scripts/supabase/edge_deploy.sh "$LANE"
+
+      - name: Validate Supabase full stack services
+        if: steps.supabase_state.outputs.running == 'true' || steps.supabase_state.outputs.volume_present != 'true'
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        env:
+          LANE: ${{ steps.lane.outputs.lane }}
+        run: |
+          echo "ℹ️  Validating full Supabase stack for lane $LANE"
+          scripts/supabase/lane.sh "$LANE" status
+
+      - name: Normalize Supabase workspace permissions
+        if: always()
+        working-directory: ${{ steps.vars.outputs.deploy_dir }}
+        run: |
+          set -euo pipefail
+
+          lane_root="$(pwd)"
+          state_dir="${lane_root}/../.supabase-state"
+
+          if [[ -d "${lane_root}/ops/supabase/lanes" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "${lane_root}/ops/supabase/lanes"
+          fi
+
+          if [[ -d "$state_dir" ]]; then
+            sudo chown -R "$(id -u)":"$(id -g)" "$state_dir"
+          fi
 
       - name: Use Node.js
         uses: actions/setup-node@v4
@@ -103,6 +393,21 @@ jobs:
         run: |
           PORT=${{ steps.vars.outputs.port }} pm2 start pnpm --name ${{ github.ref_name }} -- run start
           pm2 save
+
+      - name: Verify PM2 application health
+        run: |
+          echo "ℹ️  Checking PM2 process list"
+          pm2 list
+
+          echo "ℹ️  Showing recent logs for ${{ github.ref_name }}"
+          pm2 logs --nostream --lines 40 ${{ github.ref_name }} || true
+
+          echo "ℹ️  Verifying process status remains online"
+          if ! pm2 jlist | jq -e --arg name "${{ github.ref_name }}" '.[] | select(.name == $name and .pm2_env.status == "online")' >/dev/null; then
+            echo "❌ App did not stay running after PM2 launch"
+            pm2 logs --nostream --lines 40 ${{ github.ref_name }} || true
+            exit 1
+          fi
 
       - name: Show deployment summary
         run: |
