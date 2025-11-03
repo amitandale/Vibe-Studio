@@ -98,6 +98,15 @@ if [[ -z "$super_password" ]]; then
   echo "⚠️  ${super_password_var} missing in credentials file; continuing under passwordless mode." >&2
 fi
 
+compose_base_args=(
+  docker compose
+  --project-directory "$official_docker_dir"
+  --env-file "$env_file"
+  -f "$official_compose"
+)
+
+compose_db_args=("${compose_base_args[@]}" --profile db-only)
+
 attempt_supabase_permission_repair() {
   if [[ "${SUPABASE_SKIP_PERMISSION_REPAIR:-}" == "1" ]]; then
     echo "⚠️  Automatic Supabase permission repair explicitly disabled via SUPABASE_SKIP_PERMISSION_REPAIR=1." >&2
@@ -109,20 +118,12 @@ attempt_supabase_permission_repair() {
     return 1
   fi
 
-  local -a compose_base=(
-    docker compose
-    --project-directory "$official_docker_dir"
-    --env-file "$env_file"
-    -f "$official_compose"
-  )
-  local -a compose_db=("${compose_base[@]}" --profile db-only)
-
   echo "ℹ️  Attempting automatic Supabase Postgres permission repair." >&2
 
   local output status
 
   set +e
-  output=$("${compose_db[@]}" up -d db 2>&1)
+  output=$("${compose_db_args[@]}" up -d db 2>&1)
   status=$?
   set -e
   if (( status != 0 )); then
@@ -132,7 +133,7 @@ attempt_supabase_permission_repair() {
   fi
 
   set +e
-  output=$("${compose_db[@]}" exec -T db chown -R postgres:postgres /var/lib/postgresql/data 2>&1)
+  output=$("${compose_db_args[@]}" exec -T db chown -R postgres:postgres /var/lib/postgresql/data 2>&1)
   status=$?
   set -e
   if (( status != 0 )); then
@@ -152,7 +153,7 @@ attempt_supabase_permission_repair() {
     local readiness_output=""
     while (( readiness_attempt < 15 )); do
       set +e
-      readiness_output=$("${compose_db[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d postgres -U postgres 2>&1)
+      readiness_output=$("${compose_db_args[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d postgres -U postgres 2>&1)
       readiness_status=$?
       set -e
       if (( readiness_status == 0 )); then
@@ -180,7 +181,7 @@ PY
     else
       sql="ALTER ROLE \"${super_role}\" WITH PASSWORD '${escaped_password}';"
       set +e
-      output=$("${compose_db[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d postgres -c "$sql" 2>&1)
+      output=$("${compose_db_args[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d postgres -c "$sql" 2>&1)
       status=$?
       set -e
       if (( status != 0 )); then
@@ -197,7 +198,7 @@ PY
   fi
 
   set +e
-  output=$("${compose_db[@]}" restart db 2>&1)
+  output=$("${compose_db_args[@]}" restart db 2>&1)
   status=$?
   set -e
   if (( status != 0 )); then
@@ -210,7 +211,7 @@ PY
   local pg_ready_output=""
   while (( attempts < 10 )); do
     set +e
-    pg_ready_output=$("${compose_db[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d "$PGDATABASE" -U postgres 2>&1)
+    pg_ready_output=$("${compose_db_args[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d "$PGDATABASE" -U postgres 2>&1)
     pg_ready_status=$?
     set -e
     if (( pg_ready_status == 0 )); then
@@ -228,6 +229,68 @@ PY
   fi
 
   echo "ℹ️  Automatic Supabase permission repair completed." >&2
+  return 0
+}
+
+attempt_supabase_password_realign() {
+  if [[ "${SUPABASE_SKIP_DB_RESET:-}" == "1" ]]; then
+    echo "⚠️  Automatic Supabase database reset disabled via SUPABASE_SKIP_DB_RESET=1." >&2
+    return 1
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "⚠️  Docker CLI not available; cannot reset Supabase database volume automatically." >&2
+    return 1
+  fi
+
+  echo "ℹ️  Attempting automatic Supabase database reset to realign credentials." >&2
+
+  local output status
+
+  set +e
+  output=$("${compose_db_args[@]}" down --volumes --remove-orphans 2>&1)
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "❌ Failed to stop Supabase db stack while resetting credentials." >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+
+  set +e
+  output=$("${compose_db_args[@]}" up -d db 2>&1)
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "❌ Unable to start Supabase db container after resetting credentials." >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+
+  local attempts=0
+  local readiness_status=1
+  local readiness_output=""
+  while (( attempts < 20 )); do
+    set +e
+    readiness_output=$("${compose_db_args[@]}" exec -T db pg_isready -h 127.0.0.1 -p "${POSTGRES_PORT:-5432}" -d "$PGDATABASE" -U postgres 2>&1)
+    readiness_status=$?
+    set -e
+    if (( readiness_status == 0 )); then
+      break
+    fi
+    sleep 3
+    ((attempts++))
+  done
+
+  if (( readiness_status != 0 )); then
+    echo "❌ Postgres did not become ready after resetting the database volume." >&2
+    if [[ -n "$readiness_output" ]]; then
+      printf '    %s\n' "$readiness_output" >&2
+    fi
+    return "$readiness_status"
+  fi
+
+  echo "ℹ️  Supabase database reset completed; credentials now reflect the lane environment file." >&2
   return 0
 }
 
@@ -308,6 +371,7 @@ PY
   echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
 
   local permission_repair_attempted=false
+  local password_realign_attempted=false
 
   while true; do
     local supabase_log_tmp
@@ -327,6 +391,7 @@ PY
     fi
 
     local permission_issue_detected=false
+    local password_issue_detected=false
     if grep -qi 'tls error' "$supabase_log_tmp"; then
       echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
       echo "    Ensure ${cli_db_url_label} includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
@@ -336,6 +401,12 @@ PY
     if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
       permission_issue_detected=true
       echo "️  Supabase CLI could not read Postgres data files due to permission issues." >&2
+    fi
+
+    if grep -qi 'password authentication failed' "$supabase_log_tmp"; then
+      password_issue_detected=true
+      echo "‼️  Supabase CLI reported password authentication failure for the lane database user." >&2
+      echo "    Lane secrets may not match the Postgres role passwords; attempting automated recovery." >&2
     fi
 
     if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == false ]]; then
@@ -351,6 +422,21 @@ PY
 
     if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == true ]]; then
       echo "‼️  Automatic Supabase permission repair already attempted; skipping additional retries." >&2
+    fi
+
+    if [[ "$password_issue_detected" == true && "$password_realign_attempted" == false ]]; then
+      if attempt_supabase_password_realign; then
+        echo "ℹ️  Retrying supabase db push dry-run after automatic credential realignment." >&2
+        password_realign_attempted=true
+        rm -f "$supabase_log_tmp"
+        continue
+      else
+        echo "‼️  Automatic Supabase database reset failed; manual intervention required." >&2
+      fi
+    fi
+
+    if [[ "$password_issue_detected" == true && "$password_realign_attempted" == true ]]; then
+      echo "‼️  Automatic Supabase database reset already attempted; skipping additional retries." >&2
     fi
 
     rm -f "$supabase_log_tmp"

@@ -154,6 +154,8 @@ stored roles using those credentials before migrations run, so the lane is heale
   docker compose --profile db-only exec db psql -U postgres -d postgres -c "ALTER USER ${POSTGRES_USER:-postgres} WITH PASSWORD '<POSTGRES_PASSWORD value from credentials.env>'"
   ```
 
+- **`password authentication failed for user "supabase_admin"` during validation**: The deploy helper now resets the Supabase database volume when credentials drift beyond repair so fresh containers boot with the passwords declared in `ops/supabase/lanes/<lane>.env`. This wipes the lane’s data (matching the expectations for ephemeral pre-production lanes) and replays migrations automatically. If you must preserve data, set `SUPABASE_SKIP_DB_RESET=1` before rerunning the workflow and repair the credentials manually instead.
+
 ## 📚 References
 
 - [Supabase Self-Hosting Documentation](https://supabase.com/docs/guides/self-hosting)
