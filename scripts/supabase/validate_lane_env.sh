@@ -231,6 +231,134 @@ PY
   return 0
 }
 
+run_supabase_cli_dry_run() {
+  local db_probe_state="unknown"
+  local db_probe_method=""
+  local db_probe_details=""
+
+  if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
+    if command -v pg_isready >/dev/null 2>&1; then
+      db_probe_method="pg_isready"
+      set +e
+      local pg_isready_output
+      pg_isready_output=$(pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" 2>&1)
+      local pg_isready_status=$?
+      set -e
+      if (( pg_isready_status == 0 )); then
+        db_probe_state="online"
+      else
+        db_probe_state="offline"
+        db_probe_details="$pg_isready_output"
+      fi
+    else
+      db_probe_method="python-socket"
+      set +e
+      local python_output
+      python_output=$(python3 - "$PGHOST" "$PGPORT" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+    except OSError as exc:
+        print(f"tcp connection failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+sys.exit(0)
+PY
+)
+      local python_status=$?
+      set -e
+      if (( python_status == 0 )); then
+        db_probe_state="online"
+      else
+        db_probe_state="offline"
+        db_probe_details="$python_output"
+      fi
+    fi
+  fi
+
+  if [[ "$db_probe_state" == "offline" ]]; then
+    echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable via ${db_probe_method:-no probe}." >&2
+    if [[ -n "${db_probe_details:-}" ]]; then
+      while IFS= read -r line; do
+        echo "    ${line}" >&2
+      done <<<"${db_probe_details}"
+    fi
+    return 0
+  fi
+
+  if [[ "$db_probe_state" == "online" ]]; then
+    echo "ℹ️  Running supabase db push dry-run (Postgres reachable via ${db_probe_method})." >&2
+  else
+    echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
+  fi
+
+  local cli_db_url_value="${SUPABASE_CLI_DB_URL:-$SUPABASE_DB_URL}"
+  local cli_db_url_label="SUPABASE_DB_URL"
+  if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
+    cli_db_url_label="SUPABASE_CLI_DB_URL"
+  fi
+
+  echo "ℹ️  ${cli_db_url_label}=${cli_db_url_value}" >&2
+  echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
+
+  local permission_repair_attempted=false
+
+  while true; do
+    local supabase_log_tmp
+    supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
+    set +e
+    PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$cli_db_url_value" --dry-run |& tee "$supabase_log_tmp" >&2
+    local supabase_status=${PIPESTATUS[0]}
+    set -e
+
+    if (( supabase_status == 0 )); then
+      rm -f "$supabase_log_tmp"
+      break
+    fi
+
+    if [[ ! -s "$supabase_log_tmp" ]]; then
+      echo "‼️  Supabase CLI produced no output." >&2
+    fi
+
+    local permission_issue_detected=false
+    if grep -qi 'tls error' "$supabase_log_tmp"; then
+      echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
+      echo "    Ensure ${cli_db_url_label} includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
+      echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
+    fi
+
+    if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
+      permission_issue_detected=true
+      echo "️  Supabase CLI could not read Postgres data files due to permission issues." >&2
+    fi
+
+    if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == false ]]; then
+      if attempt_supabase_permission_repair; then
+        echo "ℹ️  Retrying supabase db push dry-run after automatic permission repair." >&2
+        permission_repair_attempted=true
+        rm -f "$supabase_log_tmp"
+        continue
+      else
+        echo "‼️  Automatic Supabase permission repair attempt failed; manual intervention required." >&2
+      fi
+    fi
+
+    if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == true ]]; then
+      echo "‼️  Automatic Supabase permission repair already attempted; skipping additional retries." >&2
+    fi
+
+    rm -f "$supabase_log_tmp"
+    echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
+    fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
+  done
+}
+
 required_vars=(
   COMPOSE_PROJECT_NAME
   LANE
@@ -549,125 +677,11 @@ if [[ -f "$cli_helper" ]]; then
   # shellcheck disable=SC1090
   source "$cli_helper"
   if supabase_cli_env "$lane" && command -v supabase >/dev/null 2>&1; then
-    db_probe_state="unknown"
-    db_probe_method=""
-    if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
-      if command -v pg_isready >/dev/null 2>&1; then
-        db_probe_method="pg_isready"
-        set +e
-        pg_isready_output=$(pg_isready -h "$PGHOST" -p "$PGPORT" -U "${PGUSER:-postgres}" 2>&1)
-        pg_isready_status=$?
-        set -e
-        if (( pg_isready_status == 0 )); then
-          db_probe_state="online"
-        else
-          db_probe_state="offline"
-          db_probe_details="$pg_isready_output"
-        fi
-      else
-        db_probe_method="python-socket"
-        set +e
-        python_output=$(python3 - "$PGHOST" "$PGPORT" <<'PY'
-import socket
-import sys
-
-host = sys.argv[1]
-port = int(sys.argv[2])
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.settimeout(3)
-    try:
-        sock.connect((host, port))
-    except OSError as exc:
-        print(f"tcp connection failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-sys.exit(0)
-PY
-)
-        python_status=$?
-        set -e
-        if (( python_status == 0 )); then
-          db_probe_state="online"
-        else
-          db_probe_state="offline"
-          db_probe_details="$python_output"
-        fi
-      fi
-    fi
-
-    if [[ "$db_probe_state" == "offline" ]]; then
-      echo "⚠️  Skipping supabase db push dry-run because ${PGHOST}:${PGPORT} is unreachable via ${db_probe_method:-no probe}." >&2
-      if [[ -n "${db_probe_details:-}" ]]; then
-        while IFS= read -r line; do
-          echo "    ${line}" >&2
-        done <<<"${db_probe_details}"
-      fi
-    else
-      if [[ "$db_probe_state" == "online" ]]; then
-        echo "ℹ️  Running supabase db push dry-run (Postgres reachable via ${db_probe_method})." >&2
-      else
-        echo "ℹ️  Running supabase db push dry-run (Postgres availability probe unavailable)." >&2
-      fi
-
-      local cli_db_url_value="${SUPABASE_CLI_DB_URL:-$SUPABASE_DB_URL}"
-      local cli_db_url_label="SUPABASE_DB_URL"
-      if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
-        cli_db_url_label="SUPABASE_CLI_DB_URL"
-      fi
-      echo "ℹ️  ${cli_db_url_label}=${cli_db_url_value}" >&2
-      echo "ℹ️  Streaming Supabase CLI dry-run output below." >&2
-      permission_repair_attempted=false
-      while true; do
-        supabase_log_tmp="$(mktemp -t supabase-dry-run-XXXXXX)"
-        set +e
-        PGSSLMODE="${PGSSLMODE:-disable}" supabase db push --db-url "$cli_db_url_value" --dry-run |& tee "$supabase_log_tmp" >&2
-        supabase_status=${PIPESTATUS[0]}
-        set -e
-
-        if (( supabase_status == 0 )); then
-          rm -f "$supabase_log_tmp"
-          break
-        fi
-
-        if [[ ! -s "$supabase_log_tmp" ]]; then
-          echo "‼️  Supabase CLI produced no output." >&2
-        fi
-
-        permission_issue_detected=false
-        if grep -qi 'tls error' "$supabase_log_tmp"; then
-          echo "‼️  Supabase CLI reported a TLS handshake failure." >&2
-          echo "    Ensure ${cli_db_url_label} includes '?sslmode=disable' and that the Postgres instance accepts non-TLS connections." >&2
-          echo "    If the lane runs inside Docker, confirm the 'supabase-db' volume ownership and credentials match the lane secrets." >&2
-        fi
-
-        if grep -qi 'pg_filenode.map' "$supabase_log_tmp" || grep -qi 'permission denied' "$supabase_log_tmp"; then
-          permission_issue_detected=true
-          echo "‼️  Supabase CLI could not read Postgres data files due to permission issues." >&2
-        fi
-
-        if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == false ]]; then
-          if attempt_supabase_permission_repair; then
-            echo "ℹ️  Retrying supabase db push dry-run after automatic permission repair." >&2
-            permission_repair_attempted=true
-            rm -f "$supabase_log_tmp"
-            continue
-          else
-            echo "‼️  Automatic Supabase permission repair attempt failed; manual intervention required." >&2
-          fi
-        fi
-
-        if [[ "$permission_issue_detected" == true && "$permission_repair_attempted" == true ]]; then
-          echo "‼️  Automatic Supabase permission repair already attempted; skipping additional retries." >&2
-        fi
-
-        rm -f "$supabase_log_tmp"
-        echo "‼️  Supabase CLI dry-run failed with exit code ${supabase_status}; see output above." >&2
-        fail "supabase db push --dry-run failed for lane '$lane' (exit code ${supabase_status})." "Review the Supabase CLI error output above."
-      done
-    fi
+    run_supabase_cli_dry_run
   else
     echo "⚠️  Supabase CLI unavailable; skipping db push dry-run." >&2
   fi
+
 else
   echo "⚠️  Supabase CLI helper missing at $cli_helper; skipping db push dry-run." >&2
 fi
