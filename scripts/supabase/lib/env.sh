@@ -49,9 +49,29 @@ PY
 
 supabase_resolve_cli_db_url() {
   local current_cli_url="${SUPABASE_CLI_DB_URL:-}" host="${PGHOST:-}" port="${PGPORT:-${PGHOST_PORT:-}}"
-  local user="${SUPABASE_CLI_DB_USER:-${POSTGRES_USER:-${PGUSER:-}}}"
-  local password="${SUPABASE_CLI_DB_PASSWORD:-${POSTGRES_PASSWORD:-${PGPASSWORD:-}}}"
+  local user="${SUPABASE_CLI_DB_USER:-}"
+  local password="${SUPABASE_CLI_DB_PASSWORD:-}"
   local database="${SUPABASE_CLI_DB_NAME:-${PGDATABASE:-${POSTGRES_DB:-}}}"
+
+  if [[ -z "$user" ]]; then
+    if [[ -n "${SUPABASE_SUPER_ROLE:-}" ]]; then
+      user="$SUPABASE_SUPER_ROLE"
+    elif [[ -n "${POSTGRES_USER:-}" ]]; then
+      user="$POSTGRES_USER"
+    elif [[ -n "${PGUSER:-}" ]]; then
+      user="$PGUSER"
+    fi
+  fi
+
+  if [[ -z "$password" ]]; then
+    if [[ -n "${SUPABASE_SUPER_PASSWORD:-}" ]]; then
+      password="$SUPABASE_SUPER_PASSWORD"
+    elif [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
+      password="$POSTGRES_PASSWORD"
+    elif [[ -n "${PGPASSWORD:-}" ]]; then
+      password="$PGPASSWORD"
+    fi
+  fi
 
   if [[ -n "$current_cli_url" ]]; then
     printf '%s' "$current_cli_url"

@@ -1517,7 +1517,15 @@ case "$cmd" in
       required_services=("${filtered_services[@]}")
     fi
     if (( ${#required_services[@]} == 0 )); then
-      required_services=(db kong)
+      local -a default_services=(db)
+      local -a gateway_candidates=(kong kong-ee traffic gateway api-gateway api_gateway rest-gateway rest_gateway router)
+      local candidate
+      for candidate in "${gateway_candidates[@]}"; do
+        if compose_has_service "$candidate"; then
+          default_services+=("$candidate")
+        fi
+      done
+      required_services=("${default_services[@]}")
     fi
 
     if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
