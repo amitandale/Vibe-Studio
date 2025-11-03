@@ -1,22 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Inter, Rajdhani } from "next/font/google";
 import React from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
-
-const inter = Inter({
-  subsets: ["latin"],
-  preload: true,
-  display: "swap",
-});
-
-const rajdhani = Rajdhani({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  preload: true,
-  display: "swap",
-  variable: "--font-rajdhani",
-});
 
 export const metadata: Metadata = {
   title: "Vibe-Studio",
@@ -49,8 +34,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${rajdhani.variable}`} suppressHydrationWarning>
-      <body className={`${inter.className} bg-slate-950 text-slate-100`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className="bg-slate-950 text-slate-100">
         <NuqsAdapter>{children}</NuqsAdapter>
       </body>
     </html>

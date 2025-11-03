@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-rajdhani: "Rajdhani", var(--font-sans);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -120,6 +122,7 @@
   }
 
   body {
+    font-family: var(--font-sans);
     @apply bg-background text-foreground;
   }
 
@@ -150,6 +153,6 @@
   }
 
   .font-rajdhani {
-    font-family: var(--font-rajdhani), var(--font-sans);
+    font-family: var(--font-rajdhani);
   }
 }
