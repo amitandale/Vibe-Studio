@@ -81,13 +81,32 @@ if [[ -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
 fi
 echo "ℹ️  ${cli_db_label}=${cli_db_url}" >&2
 
+supabase_project_dir="$root/supabase"
+if [[ ! -d "$supabase_project_dir" ]]; then
+  echo "Supabase project directory missing at $supabase_project_dir" >&2
+  exit 1
+fi
+
 args=(
   "supabase"
-  "--config" "$SUPABASE_CONFIG_PATH"
+  "--workdir" "$supabase_project_dir"
   "db" "$action"
   "--db-url" "$cli_db_url"
   "--non-interactive"
   "--debug"
 )
+
+display_args=("${args[@]}")
+for i in "${!display_args[@]}"; do
+  if [[ "${display_args[$i]}" == "--db-url" && $((i + 1)) -lt ${#display_args[@]} ]]; then
+    display_args[$((i + 1))]="***"
+    break
+  fi
+done
+
+formatted_command=""
+printf -v formatted_command '%q ' "${display_args[@]}"
+formatted_command="${formatted_command% }"
+printf 'ℹ️  Executing: %s\n' "$formatted_command" >&2
 
 PGSSLMODE="${PGSSLMODE:-disable}" "${args[@]}"
