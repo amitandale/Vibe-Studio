@@ -394,6 +394,21 @@ jobs:
           PORT=${{ steps.vars.outputs.port }} pm2 start pnpm --name ${{ github.ref_name }} -- run start
           pm2 save
 
+      - name: Verify PM2 application health
+        run: |
+          echo "ℹ️  Checking PM2 process list"
+          pm2 list
+
+          echo "ℹ️  Showing recent logs for ${{ github.ref_name }}"
+          pm2 logs --nostream --lines 40 ${{ github.ref_name }} || true
+
+          echo "ℹ️  Verifying process status remains online"
+          if ! pm2 jlist | jq -e --arg name "${{ github.ref_name }}" '.[] | select(.name == $name and .pm2_env.status == "online")' >/dev/null; then
+            echo "❌ App did not stay running after PM2 launch"
+            pm2 logs --nostream --lines 40 ${{ github.ref_name }} || true
+            exit 1
+          fi
+
       - name: Show deployment summary
         run: |
           PUBLIC_IP=$(curl -4 ifconfig.me)
