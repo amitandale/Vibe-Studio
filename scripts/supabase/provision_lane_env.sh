@@ -245,6 +245,17 @@ if [[ -z "$pg_super_password" && -n "$credentials_super_password" ]]; then
   pg_super_password="$credentials_super_password"
 fi
 
+if [[ "$pg_super_role" =~ ^supabase_admin(_.*)?$ ]]; then
+  if [[ -n "$pg_super_password" && "$pg_super_password" != "$pg_password" ]]; then
+    echo "ℹ️  Aligning Supabase superuser password for reserved role '$pg_super_role' with the lane Postgres password." >&2
+  fi
+  pg_super_password="$pg_password"
+fi
+
+if [[ -z "$pg_super_password" ]]; then
+  pg_super_password="$pg_password"
+fi
+
 if [[ "$pg_super_password_override" == true || "$pg_super_password" != "${credentials_super_password}" ]]; then
   update_credentials_file "${lane_upper}_SUPER_PASSWORD" "$pg_super_password"
 fi

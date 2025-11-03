@@ -168,9 +168,6 @@ fi
 if [[ -z "$injected_super_role" ]]; then
   injected_super_role="supabase_admin"
 fi
-if [[ "$injected_super_role" == supabase_admin_${lane} ]]; then
-  injected_super_role="supabase_admin"
-fi
 
 if [[ -z "$injected_super_password" ]]; then
   echo "${credentials_super_password_var} missing in $credentials_file; cannot continue." >&2
@@ -312,14 +309,18 @@ prepare_envfile() {
   add_or_update_kv env_map key_order PGPORT "$host_port"
   add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  if [[ -z "${env_map[PGPASSWORD]:-}" && -n "$injected_super_password" ]]; then
-    add_or_update_kv env_map key_order PGPASSWORD "$injected_super_password"
+  local lane_postgres_user
+  lane_postgres_user="${env_map[POSTGRES_USER]:-${POSTGRES_USER:-postgres}}"
+  if [[ -z "$lane_postgres_user" ]]; then
+    lane_postgres_user="postgres"
   fi
 
+  add_or_update_kv env_map key_order POSTGRES_USER "$lane_postgres_user"
+  add_or_update_kv env_map key_order PGUSER "$lane_postgres_user"
+  add_or_update_kv env_map key_order PGPASSWORD "$injected_pg_password"
+
   add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "${env_map[SUPABASE_SUPER_ROLE]:-$injected_super_role}"
-  if [[ -z "${env_map[SUPABASE_SUPER_PASSWORD]:-}" && -n "$injected_super_password" ]]; then
-    add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
-  fi
+  add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_pg_password"
 
   if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
     add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"
@@ -1517,7 +1518,15 @@ case "$cmd" in
       required_services=("${filtered_services[@]}")
     fi
     if (( ${#required_services[@]} == 0 )); then
-      required_services=(db kong)
+      local -a default_services=(db)
+      local -a gateway_candidates=(kong kong-ee traffic gateway api-gateway api_gateway rest-gateway rest_gateway router)
+      local candidate
+      for candidate in "${gateway_candidates[@]}"; do
+        if compose_has_service "$candidate"; then
+          default_services+=("$candidate")
+        fi
+      done
+      required_services=("${default_services[@]}")
     fi
 
     if ! ps_check_output=$("${compose_cmd[@]}" ps 2>&1); then
@@ -1610,6 +1619,7 @@ case "$cmd" in
           declare -A service_state_map=()
           declare -A service_names=()
           declare -A service_health_map=()
+          declare -A transitional_service_health_map=()
 
           for svc in "${required_services[@]}"; do
             svc_json=$(jq -c --arg svc "$svc" --arg project "${COMPOSE_PROJECT_NAME:-}" '
@@ -1672,12 +1682,31 @@ case "$cmd" in
               end
             ' <<<"$svc_json")
             health_lc=$(printf '%s' "${health}" | tr '[:upper:]' '[:lower:]')
-            if [[ -n "$health_lc" && "$health_lc" != healthy ]]; then
-              service_health_map[$svc]="$health_lc"
+            if [[ -n "$health_lc" ]]; then
+              case "$health_lc" in
+                healthy)
+                  ;;
+                starting*|init*|pending|creating|created|launching|up|running)
+                  transitional_service_health_map[$svc]="$health_lc"
+                  ;;
+                *)
+                  service_health_map[$svc]="$health_lc"
+                  ;;
+              esac
             fi
           done
 
           if (( ${#missing_services[@]} == 0 && ${#inactive_services[@]} == 0 && ${#service_health_map[@]} == 0 )); then
+            if (( ${#transitional_service_health_map[@]} > 0 )); then
+              {
+                echo "ℹ️  Supabase lane services are still transitioning for lane '$lane'."
+                printf '   Transitioning services (json):'
+                for svc in "${!transitional_service_health_map[@]}"; do
+                  printf ' %s(health=%s)' "$svc" "${transitional_service_health_map[$svc]}"
+                done
+                printf '\n'
+              } >&2
+            fi
             exit 0
           fi
 
@@ -1697,6 +1726,13 @@ case "$cmd" in
               printf '   Unhealthy services (json):'
               for svc in "${!service_health_map[@]}"; do
                 printf ' %s(health=%s)' "$svc" "${service_health_map[$svc]}"
+              done
+              printf '\n'
+            fi
+            if (( ${#transitional_service_health_map[@]} > 0 )); then
+              printf '   Transitioning services (json):'
+              for svc in "${!transitional_service_health_map[@]}"; do
+                printf ' %s(health=%s)' "$svc" "${transitional_service_health_map[$svc]}"
               done
               printf '\n'
             fi
