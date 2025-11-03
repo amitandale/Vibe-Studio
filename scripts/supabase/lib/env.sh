@@ -47,15 +47,36 @@ print(f"postgresql://{auth}{endpoint}/{database}{query}")
 PY
 }
 
+supabase_db_url_user() {
+  local url="${1:-}"
+  if [[ -z "$url" ]]; then
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to parse Supabase database URLs" >&2
+    return 1
+  fi
+  python3 - "$url" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+parsed = urlparse(sys.argv[1])
+if parsed.username:
+    print(parsed.username)
+PY
+}
+
 supabase_resolve_cli_db_url() {
   local current_cli_url="${SUPABASE_CLI_DB_URL:-}" host="${PGHOST:-}" port="${PGPORT:-${PGHOST_PORT:-}}"
   local user="${SUPABASE_CLI_DB_USER:-}"
   local password="${SUPABASE_CLI_DB_PASSWORD:-}"
   local database="${SUPABASE_CLI_DB_NAME:-${PGDATABASE:-${POSTGRES_DB:-}}}"
+  local super_user="${SUPABASE_SUPER_ROLE:-}"
+  local super_password="${SUPABASE_SUPER_PASSWORD:-}"
 
   if [[ -z "$user" ]]; then
-    if [[ -n "${SUPABASE_SUPER_ROLE:-}" ]]; then
-      user="$SUPABASE_SUPER_ROLE"
+    if [[ -n "$super_user" ]]; then
+      user="$super_user"
     elif [[ -n "${POSTGRES_USER:-}" ]]; then
       user="$POSTGRES_USER"
     elif [[ -n "${PGUSER:-}" ]]; then
@@ -64,12 +85,35 @@ supabase_resolve_cli_db_url() {
   fi
 
   if [[ -z "$password" ]]; then
-    if [[ -n "${SUPABASE_SUPER_PASSWORD:-}" ]]; then
-      password="$SUPABASE_SUPER_PASSWORD"
+    if [[ -n "$super_password" ]]; then
+      password="$super_password"
     elif [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
       password="$POSTGRES_PASSWORD"
     elif [[ -n "${PGPASSWORD:-}" ]]; then
       password="$PGPASSWORD"
+    fi
+  fi
+
+  local prefer_superuser="${SUPABASE_FORCE_SUPERUSER_CLI:-1}"
+  local super_cli_url=""
+  if [[ -n "$super_user" && -n "$host" && -n "$port" && -n "$database" ]]; then
+    super_cli_url="$(supabase_build_db_url "$super_user" "$super_password" "$host" "$port" "$database" "sslmode=disable" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$super_cli_url" ]]; then
+    if [[ -z "$current_cli_url" ]]; then
+      printf '%s' "$super_cli_url"
+      return 0
+    fi
+
+    local current_user=""
+    current_user="$(supabase_db_url_user "$current_cli_url" 2>/dev/null || true)"
+
+    if [[ "$prefer_superuser" == "1" || "$prefer_superuser" == "true" ]]; then
+      if [[ -z "$current_user" || "$current_user" != "$super_user" ]]; then
+        printf '%s' "$super_cli_url"
+        return 0
+      fi
     fi
   fi
 
