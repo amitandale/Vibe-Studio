@@ -177,15 +177,16 @@ supabase_cli_bootstrap() {
 
 supabase_cli_require() {
   local bin="$1" lane="${2:-${LANE:-default}}"
-  if command -v "$bin" >/dev/null 2>&1; then
-    return 0
-  fi
+
   if [[ "$bin" == "supabase" ]]; then
     supabase_cli_bootstrap "$lane" || return 1
+    hash -r 2>/dev/null || true
   fi
+
   if command -v "$bin" >/dev/null 2>&1; then
     return 0
   fi
+
   echo "required command '$bin' not found in PATH" >&2
   return 1
 }
@@ -203,44 +204,33 @@ supabase_cli_env() {
   # shellcheck disable=SC1090
   set -a; source "$repo_envfile"; set +a
 
-  local db_url="${SUPABASE_DB_URL:-}" expected_db_url=""
-  if command -v python3 >/dev/null 2>&1 && declare -f supabase_build_db_url >/dev/null 2>&1; then
-    expected_db_url="$(supabase_build_db_url "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}")"
+  local service_db_url="${SUPABASE_DB_URL:-}"
+  local db_url=""
+
+  if declare -f supabase_resolve_cli_db_url >/dev/null 2>&1; then
+    db_url="$(supabase_resolve_cli_db_url 2>/dev/null || true)"
   fi
-  if [[ -n "$expected_db_url" ]]; then
-    db_url="$expected_db_url"
-  elif [[ -z "$db_url" ]]; then
-    db_url=$(python3 - <<'PY' "${PGUSER:-postgres}" "${PGPASSWORD:-}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-postgres}"
-import sys
-from urllib.parse import quote
 
-def encode(value: str) -> str:
-    return quote(value, safe="")
-
-user = encode(sys.argv[1]) if sys.argv[1] else ""
-password = sys.argv[2]
-host = sys.argv[3]
-port = sys.argv[4]
-database = encode(sys.argv[5]) if sys.argv[5] else ""
-
-auth = ""
-if user:
-    if password:
-        auth = f"{user}:{encode(password)}@"
-    else:
-        auth = f"{user}@"
-elif password:
-    auth = f":{encode(password)}@"
-
-endpoint = host
-if port:
-    endpoint = f"{host}:{port}"
-
-print(f"postgresql://{auth}{endpoint}/{database}")
-PY
-)
+  if [[ -z "$db_url" && -n "${SUPABASE_CLI_DB_URL:-}" ]]; then
+    db_url="$SUPABASE_CLI_DB_URL"
   fi
+
+  if [[ -z "$db_url" ]]; then
+    if command -v python3 >/dev/null 2>&1 && declare -f supabase_build_db_url >/dev/null 2>&1; then
+      db_url="$(supabase_build_db_url "${POSTGRES_USER:-${PGUSER:-postgres}}" "${POSTGRES_PASSWORD:-${PGPASSWORD:-}}" "${PGHOST:-127.0.0.1}" "${PGPORT:-${PGHOST_PORT:-5432}}" "${PGDATABASE:-${POSTGRES_DB:-postgres}}" "sslmode=disable" 2>/dev/null || true)"
+    fi
+  fi
+
+  if [[ -z "$db_url" ]]; then
+    db_url="$service_db_url"
+  fi
+
+  export SUPABASE_SERVICE_DB_URL="$service_db_url"
+  export SUPABASE_CLI_DB_URL="$db_url"
   export SUPABASE_DB_URL="$db_url"
+  if [[ -n "$db_url" && "$db_url" == *"sslmode=disable"* ]]; then
+    export PGSSLMODE=disable
+  fi
 
   local lane_config="$__supabase_cli_root/supabase/config.${lane}.toml"
   if [[ ! -f "$lane_config" ]]; then
@@ -270,11 +260,7 @@ PY
 supabase_cli_exec() {
   local lane="${1:?lane}"; shift
   supabase_cli_env "$lane"
-  local args=("supabase" "--config" "$SUPABASE_CONFIG_PATH")
-  if [[ $# -gt 0 ]]; then
-    args+=("$@")
-  fi
-  exec "${args[@]}"
+  exec supabase "$@"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

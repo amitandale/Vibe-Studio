@@ -92,7 +92,7 @@ fi
 
 if ! declare -f supabase_build_db_url >/dev/null 2>&1; then
   supabase_build_db_url() {
-    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+    python3 - "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
 import sys
 from urllib.parse import quote
 
@@ -104,6 +104,7 @@ password = sys.argv[2]
 host = sys.argv[3]
 port = sys.argv[4]
 database = encode(sys.argv[5]) if sys.argv[5] else ""
+query = sys.argv[6] if len(sys.argv) > 6 else ""
 
 auth = ""
 if user:
@@ -118,7 +119,11 @@ endpoint = host
 if port:
     endpoint = f"{host}:{port}"
 
-print(f"postgresql://{auth}{endpoint}/{database}")
+if query:
+    if not query.startswith("?"):
+        query = f"?{query}"
+
+print(f"postgresql://{auth}{endpoint}/{database}{query}")
 PY
   }
 fi
@@ -369,11 +374,18 @@ set_env "SUPABASE_URL" "$(ensure_existing_or_default SUPABASE_URL "$site_url_def
 set_env "API_EXTERNAL_URL" "$(ensure_existing_or_default API_EXTERNAL_URL "$site_url_default")"
 set_env "DOCKER_SOCKET_LOCATION" "$(ensure_existing_or_default DOCKER_SOCKET_LOCATION "/var/run/docker.sock")"
 
-if ! db_url="$(supabase_build_db_url "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db")"; then
+if ! db_url="$(supabase_build_db_url "$pg_super_role" "$pg_super_password" "127.0.0.1" "$pg_host_port" "$pg_db" "sslmode=disable")"; then
   echo "Failed to construct SUPABASE_DB_URL; verify python3 is installed." >&2
   exit 1
 fi
 set_env "SUPABASE_DB_URL" "$db_url"
+
+if ! cli_db_url="$(supabase_build_db_url "${POSTGRES_USER:-postgres}" "$pg_password" "127.0.0.1" "$pg_host_port" "$pg_db" "sslmode=disable")"; then
+  echo "Failed to construct SUPABASE_CLI_DB_URL; verify python3 is installed." >&2
+  exit 1
+fi
+set_env "SUPABASE_CLI_DB_URL" "$cli_db_url"
+
 set_env "SUPABASE_PROJECT_REF" "$(ensure_existing_or_default SUPABASE_PROJECT_REF "$lane")"
 
 set_env "LOGFLARE_PUBLIC_ACCESS_TOKEN" "$logflare_public"

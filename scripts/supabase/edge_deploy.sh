@@ -30,4 +30,4 @@ if [[ $# -eq 0 ]]; then
 fi
 
 echo "ℹ️  Deploying Supabase Edge resources for lane '$lane' via Supabase CLI" >&2
-exec supabase --config "$SUPABASE_CONFIG_PATH" "$@"
+exec supabase "$@"
