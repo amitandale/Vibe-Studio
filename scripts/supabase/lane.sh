@@ -1619,6 +1619,7 @@ case "$cmd" in
           declare -A service_state_map=()
           declare -A service_names=()
           declare -A service_health_map=()
+          declare -A transitional_service_health_map=()
 
           for svc in "${required_services[@]}"; do
             svc_json=$(jq -c --arg svc "$svc" --arg project "${COMPOSE_PROJECT_NAME:-}" '
@@ -1681,12 +1682,31 @@ case "$cmd" in
               end
             ' <<<"$svc_json")
             health_lc=$(printf '%s' "${health}" | tr '[:upper:]' '[:lower:]')
-            if [[ -n "$health_lc" && "$health_lc" != healthy ]]; then
-              service_health_map[$svc]="$health_lc"
+            if [[ -n "$health_lc" ]]; then
+              case "$health_lc" in
+                healthy)
+                  ;;
+                starting*|init*|pending|creating|created|launching|up|running)
+                  transitional_service_health_map[$svc]="$health_lc"
+                  ;;
+                *)
+                  service_health_map[$svc]="$health_lc"
+                  ;;
+              esac
             fi
           done
 
           if (( ${#missing_services[@]} == 0 && ${#inactive_services[@]} == 0 && ${#service_health_map[@]} == 0 )); then
+            if (( ${#transitional_service_health_map[@]} > 0 )); then
+              {
+                echo "ℹ️  Supabase lane services are still transitioning for lane '$lane'."
+                printf '   Transitioning services (json):'
+                for svc in "${!transitional_service_health_map[@]}"; do
+                  printf ' %s(health=%s)' "$svc" "${transitional_service_health_map[$svc]}"
+                done
+                printf '\n'
+              } >&2
+            fi
             exit 0
           fi
 
@@ -1706,6 +1726,13 @@ case "$cmd" in
               printf '   Unhealthy services (json):'
               for svc in "${!service_health_map[@]}"; do
                 printf ' %s(health=%s)' "$svc" "${service_health_map[$svc]}"
+              done
+              printf '\n'
+            fi
+            if (( ${#transitional_service_health_map[@]} > 0 )); then
+              printf '   Transitioning services (json):'
+              for svc in "${!transitional_service_health_map[@]}"; do
+                printf ' %s(health=%s)' "$svc" "${transitional_service_health_map[$svc]}"
               done
               printf '\n'
             fi
