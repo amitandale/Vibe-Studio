@@ -309,14 +309,18 @@ prepare_envfile() {
   add_or_update_kv env_map key_order PGPORT "$host_port"
   add_or_update_kv env_map key_order PGHOST_PORT "$host_port"
 
-  if [[ -z "${env_map[PGPASSWORD]:-}" && -n "$injected_super_password" ]]; then
-    add_or_update_kv env_map key_order PGPASSWORD "$injected_super_password"
+  local lane_postgres_user
+  lane_postgres_user="${env_map[POSTGRES_USER]:-${POSTGRES_USER:-postgres}}"
+  if [[ -z "$lane_postgres_user" ]]; then
+    lane_postgres_user="postgres"
   fi
 
+  add_or_update_kv env_map key_order POSTGRES_USER "$lane_postgres_user"
+  add_or_update_kv env_map key_order PGUSER "$lane_postgres_user"
+  add_or_update_kv env_map key_order PGPASSWORD "$injected_pg_password"
+
   add_or_update_kv env_map key_order SUPABASE_SUPER_ROLE "${env_map[SUPABASE_SUPER_ROLE]:-$injected_super_role}"
-  if [[ -z "${env_map[SUPABASE_SUPER_PASSWORD]:-}" && -n "$injected_super_password" ]]; then
-    add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_super_password"
-  fi
+  add_or_update_kv env_map key_order SUPABASE_SUPER_PASSWORD "$injected_pg_password"
 
   if [[ -n "${env_map[PGDATABASE]:-}" ]]; then
     add_or_update_kv env_map key_order POSTGRES_DB "${env_map[PGDATABASE]}"

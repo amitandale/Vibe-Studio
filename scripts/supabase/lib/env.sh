@@ -77,70 +77,85 @@ PY
 
 supabase_resolve_cli_db_url() {
   local current_cli_url="${SUPABASE_CLI_DB_URL:-}" host="${PGHOST:-}" port="${PGPORT:-${PGHOST_PORT:-}}"
-  local user="${SUPABASE_CLI_DB_USER:-}"
-  local password="${SUPABASE_CLI_DB_PASSWORD:-}"
+  local explicit_user="${SUPABASE_CLI_DB_USER:-}"
+  local explicit_password="${SUPABASE_CLI_DB_PASSWORD:-}"
   local database="${SUPABASE_CLI_DB_NAME:-${PGDATABASE:-${POSTGRES_DB:-}}}"
   local super_user="${SUPABASE_SUPER_ROLE:-}"
   local super_password="${SUPABASE_SUPER_PASSWORD:-}"
+  local admin_user="${POSTGRES_USER:-${PGUSER:-}}"
+  local admin_password="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
+  local prefer_superuser="${SUPABASE_FORCE_SUPERUSER_CLI:-0}"
 
-  if [[ -z "$user" ]]; then
-    if [[ -n "$super_user" ]]; then
-      user="$super_user"
-    elif [[ -n "${POSTGRES_USER:-}" ]]; then
-      user="$POSTGRES_USER"
-    elif [[ -n "${PGUSER:-}" ]]; then
-      user="$PGUSER"
-    fi
+  if [[ -z "$admin_user" && -n "$super_user" ]]; then
+    admin_user="$super_user"
+    admin_password="$super_password"
   fi
 
-  if [[ -z "$password" ]]; then
-    if [[ -n "$super_password" ]]; then
-      password="$super_password"
-    elif [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
-      password="$POSTGRES_PASSWORD"
-    elif [[ -n "${PGPASSWORD:-}" ]]; then
-      password="$PGPASSWORD"
-    fi
+  local candidate_user="$admin_user"
+  local candidate_password="$admin_password"
+
+  if [[ -n "$explicit_user" ]]; then
+    candidate_user="$explicit_user"
+    candidate_password="$explicit_password"
   fi
 
-  local prefer_superuser="${SUPABASE_FORCE_SUPERUSER_CLI:-1}"
-  local super_cli_url=""
-  if [[ -n "$super_user" && -n "$host" && -n "$port" && -n "$database" ]]; then
-    super_cli_url="$(supabase_build_db_url "$super_user" "$super_password" "$host" "$port" "$database" "sslmode=disable" 2>/dev/null || true)"
+  if [[ -z "$candidate_user" && -n "$super_user" ]]; then
+    candidate_user="$super_user"
+    candidate_password="$super_password"
   fi
 
-  if [[ -n "$super_cli_url" ]]; then
-    if [[ -z "$current_cli_url" ]]; then
-      supabase_debug_log "CLI DB URL not provided; using superuser credentials for lane access"
-      printf '%s' "$super_cli_url"
-      return 0
-    fi
+  if [[ -z "$host" || -z "$port" || -z "$database" ]]; then
+    supabase_debug_log "Insufficient connection coordinates for CLI DB URL"
+    return 1
+  fi
 
-    local current_user=""
+  local current_user=""
+  if [[ -n "$current_cli_url" ]]; then
     current_user="$(supabase_db_url_user "$current_cli_url" 2>/dev/null || true)"
+  fi
 
-    if [[ "$prefer_superuser" == "1" || "$prefer_superuser" == "true" ]]; then
-      if [[ -z "$current_user" || "$current_user" != "$super_user" ]]; then
-        supabase_debug_log "Overriding CLI DB URL user '${current_user:-<none>}' with superuser '$super_user'"
-        printf '%s' "$super_cli_url"
-        return 0
+  if [[ "$prefer_superuser" == "1" || "$prefer_superuser" == "true" ]]; then
+    if [[ -n "$super_user" ]]; then
+      supabase_debug_log "Forcing Supabase CLI to use superuser '$super_user'"
+      if [[ -z "$super_user" ]]; then
+        return 1
       fi
+      supabase_build_db_url "$super_user" "$super_password" "$host" "$port" "$database" "sslmode=disable"
+      return $?
     fi
   fi
 
   if [[ -n "$current_cli_url" ]]; then
-    supabase_debug_log "Using existing CLI DB URL without modification"
+    if [[ -n "$candidate_user" && -n "$current_user" && "$current_user" != "$candidate_user" ]]; then
+      supabase_debug_log "Replacing CLI DB URL user '$current_user' with lane admin '$candidate_user'"
+      if ! supabase_build_db_url "$candidate_user" "$candidate_password" "$host" "$port" "$database" "sslmode=disable"; then
+        return 1
+      fi
+      return 0
+    fi
+    if [[ -z "$candidate_user" ]]; then
+      supabase_debug_log "Using existing CLI DB URL without modification"
+      printf '%s' "$current_cli_url"
+      return 0
+    fi
+    if [[ -z "$current_user" ]]; then
+      supabase_debug_log "Existing CLI DB URL lacks role; rebuilding with lane admin '$candidate_user'"
+      if ! supabase_build_db_url "$candidate_user" "$candidate_password" "$host" "$port" "$database" "sslmode=disable"; then
+        return 1
+      fi
+      return 0
+    fi
+    supabase_debug_log "Existing CLI DB URL already uses role '$current_user'; keeping as-is"
     printf '%s' "$current_cli_url"
     return 0
   fi
 
-  if [[ -z "$host" || -z "$port" || -z "$user" || -z "$database" ]]; then
-    supabase_debug_log "Insufficient information to construct CLI DB URL"
+  supabase_debug_log "Constructing CLI DB URL from lane admin defaults for user '${candidate_user:-<unset>}'"
+  if [[ -z "$candidate_user" ]]; then
+    supabase_debug_log "Cannot construct CLI DB URL without a database role"
     return 1
   fi
-
-  supabase_debug_log "Constructing CLI DB URL from lane defaults for user '$user'"
-  supabase_build_db_url "$user" "$password" "$host" "$port" "$database" "sslmode=disable"
+  supabase_build_db_url "$candidate_user" "$candidate_password" "$host" "$port" "$database" "sslmode=disable"
 }
 
 supabase_update_env_var() {

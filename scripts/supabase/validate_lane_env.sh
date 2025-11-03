@@ -143,6 +143,10 @@ attempt_supabase_permission_repair() {
   fi
 
   local desired_password="${super_password:-}" sql escaped_password
+  local reserved_role=false
+  if [[ "$super_role" =~ ^supabase_admin(_.*)?$ ]]; then
+    reserved_role=true
+  fi
   if [[ -z "$desired_password" ]]; then
     desired_password="$pg_password"
   fi
@@ -171,7 +175,9 @@ attempt_supabase_permission_repair() {
       return "$readiness_status"
     fi
 
-    if ! escaped_password=$(python3 - "$desired_password" <<'PY'
+    if [[ "$reserved_role" == true ]]; then
+      echo "ℹ️  Skipping password reset for reserved Supabase role '$super_role'." >&2
+    elif ! escaped_password=$(python3 - "$desired_password" <<'PY'
 import sys
 value = sys.argv[1]
 print(value.replace("'", "''"))
@@ -185,14 +191,9 @@ PY
       status=$?
       set -e
       if (( status != 0 )); then
-        if [[ "$output" =~ [Rr]eserved[[:space:]]+[Rr]ole ]]; then
-          echo "⚠️  Supabase refused to reset password for reserved role '${super_role}'; continuing with repaired permissions." >&2
-          [[ -n "$output" ]] && printf '%s\n' "$output" >&2
-        else
-          echo "❌ Failed to align Supabase superuser password with stored credentials during automatic repair." >&2
-          [[ -n "$output" ]] && printf '%s\n' "$output" >&2
-          return "$status"
-        fi
+        echo "❌ Failed to align Supabase superuser password with stored credentials during automatic repair." >&2
+        [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+        return "$status"
       fi
     fi
   fi
