@@ -58,7 +58,6 @@ export function UIUXSelect({
               ) : null}
               {option.previewImageUrl ? (
                 <div className="overflow-hidden rounded-lg border border-slate-800/70">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={option.previewImageUrl} alt={option.name} className="h-36 w-full object-cover" />
                 </div>
               ) : null}
