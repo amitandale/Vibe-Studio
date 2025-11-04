@@ -10,7 +10,7 @@ export interface WizardStepConfig {
 }
 
 interface WizardProgressBarProps {
-  steps: WizardStepConfig[];
+  steps: ReadonlyArray<WizardStepConfig>;
   activeStepId: string;
   completedStepIds?: string[];
   className?: string;

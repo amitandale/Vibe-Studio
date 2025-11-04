@@ -916,8 +916,8 @@ export function OnboardingWizard({
         title="Reset onboarding?"
         description="This action clears the manifest, specs, stack selection, and template locks. You will need to start the onboarding flow again from Step 1."
         confirmLabel="Reset"
-        isOpen={resetOpen}
-        onClose={() => setResetOpen(false)}
+        open={resetOpen}
+        onOpenChange={setResetOpen}
         onConfirm={handleReset}
       />
     </div>
