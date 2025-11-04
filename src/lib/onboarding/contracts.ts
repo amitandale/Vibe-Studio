@@ -3,8 +3,8 @@ import { z } from "zod";
 const CONTRACT_CACHE = new Map<string, Promise<OnboardingContracts>>();
 
 interface FetchResponse {
-  ok: boolean;
-  status: number;
+  ok?: boolean;
+  status?: number;
   text: () => Promise<string>;
 }
 
@@ -92,7 +92,8 @@ async function fetchContracts(baseUrl?: string, fetchImpl?: FetchLike): Promise<
     try {
       const response = await fetchFn(endpoint, { cache: "no-store" });
       if (!response.ok) {
-        lastError = new Error(`Unable to load onboarding contracts (${response.status})`);
+        const status = response.status ?? 0;
+        lastError = new Error(`Unable to load onboarding contracts (${status})`);
         continue;
       }
       const source = await response.text();
@@ -154,7 +155,7 @@ function buildZodSchema(definition: SchemaNode | undefined, path: string[]): z.Z
     case "object": {
       const properties = definition.properties ?? {};
       const required = new Set(definition.required ?? []);
-      const shape: Record<string, z.ZodTypeAny> = {};
+      const shape: z.ZodRawShape = {};
       for (const [key, property] of Object.entries(properties)) {
         let propertySchema = buildZodSchema(property, [...path, key]);
         if (!required.has(key)) {
@@ -183,7 +184,7 @@ function buildZodSchema(definition: SchemaNode | undefined, path: string[]): z.Z
 }
 
 function buildStringSchema(definition: SchemaNode): z.ZodTypeAny {
-  if (definition.enum && definition.enum.length > 0) {
+  if (Array.isArray(definition.enum) && definition.enum.length > 0) {
     const values = definition.enum.map((value) => String(value));
     if (values.length === 1) {
       return z.literal(values[0]);

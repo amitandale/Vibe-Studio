@@ -23,15 +23,12 @@ describe("loadOnboardingContracts", () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const contracts = await loadOnboardingContracts(baseUrl, fetchMock);
     const specContract = contracts.tools["wizard/spec_chat"];
-    if (!specContract) {
-      throw new Error("Spec chat contract not found");
-    }
     const parsed = specContract.inputSchema.parse({
       project_id: "demo",
       trace_id: "trace-1",
       conversation: [],
       message: "hello",
-    }) as { project_id: string };
+    }) as unknown as { project_id: string };
     expect(parsed.project_id).toBe("demo");
     expect(specContract.outputSchema.safeParse({ messages: [] }).success).toBe(true);
     expect(fetchMock.mock.calls.length).toBe(1);
@@ -45,9 +42,8 @@ describe("loadOnboardingContracts", () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const first = await loadOnboardingContracts(baseUrl, fetchMock);
     const second = await loadOnboardingContracts(baseUrl, fetchMock);
-    if (!first.tools["wizard/pr_dashboard"] || !second.tools["wizard/pr_dashboard"]) {
-      throw new Error("PR dashboard contract missing");
-    }
+    expect(first.tools["wizard/pr_dashboard"]).toBeTruthy();
+    expect(second.tools["wizard/pr_dashboard"]).toBeTruthy();
     expect(fetchMock.mock.calls.length).toBe(1);
   });
 });

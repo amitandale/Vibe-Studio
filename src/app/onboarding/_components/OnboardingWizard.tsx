@@ -100,10 +100,11 @@ type WizardToolName =
   | "wizard/ui_recommend"
   | "wizard/pr_dashboard";
 
-type WizardChatMessage = Omit<ChatMessage, "content"> & {
-  content?: string | null;
+type WizardChatMessage = ChatMessage & {
   rationale?: string | null;
 };
+
+type WizardChatMessageState = WizardChatMessage;
 
 interface WizardRationales {
   spec?: string | null;
@@ -119,7 +120,7 @@ const INITIAL_ENVIRONMENT: McpEnvironmentSnapshot = {
   timestamp: Date.now(),
 };
 
-const INITIAL_MESSAGES: ChatMessage[] = [
+const INITIAL_MESSAGES: WizardChatMessageState[] = [
   createSystemMessage("Welcome to the Vibe-Studio onboarding flow."),
   createSystemMessage(
     "Provide your product goals, constraints, data sources, auth model, and NFRs. The advisor drafts specs with iterative validation.",
@@ -128,8 +129,8 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 
 function normalizeWizardMessages(
   messages: WizardChatMessage[] | null | undefined,
-  fallback: ChatMessage[],
-): ChatMessage[] {
+  fallback: WizardChatMessageState[],
+): WizardChatMessageState[] {
   if (!messages?.length) {
     return fallback;
   }
@@ -195,7 +196,7 @@ export function OnboardingWizard({
   const [tokens, setTokens] = React.useState<ProviderTokenRecord[]>([]);
   const [validatingProviderId, setValidatingProviderId] = React.useState<string | null>(null);
   const [tokenError, setTokenError] = React.useState<string | null>(null);
-  const [messages, setMessages] = React.useState<ChatMessage[]>(INITIAL_MESSAGES);
+  const [messages, setMessages] = React.useState<WizardChatMessageState[]>(INITIAL_MESSAGES);
   const [specDraft, setSpecDraft] = React.useState<SpecsDraft | null>(null);
   const [specConfirmation, setSpecConfirmation] = React.useState<SpecsConfirmationSummary | null>(null);
   const [stackRecommendations, setStackRecommendations] = React.useState<StackRecommendation[]>([]);
@@ -433,7 +434,7 @@ export function OnboardingWizard({
       } as Record<string, unknown>;
       const validatedInput = contract.inputSchema.parse(payload);
       const attachmentsPayload = options?.files ? await encodeAttachments(options.files) : undefined;
-      if (options?.message) {
+      if (typeof options?.message === "string") {
         const messageContent = options.message;
         setMessages((prev) => [
           ...prev,
@@ -469,14 +470,14 @@ export function OnboardingWizard({
 
   const handleSendMessage = React.useCallback(
     async (message: string) => {
-      const userMessage: ChatMessage = {
+      const userMessage: WizardChatMessageState = {
         id: uuidv4(),
         role: "user",
         content: message,
         timestamp: Date.now(),
         rationale: null,
       };
-      const conversation = [...messages, userMessage];
+      const conversation: WizardChatMessageState[] = [...messages, userMessage];
       try {
         const result = await invokeWizardTool<{
           messages: WizardChatMessage[];
@@ -487,7 +488,12 @@ export function OnboardingWizard({
         }>(
           "wizard/spec_chat",
           {
-            conversation: conversation.map(({ id, role, content, rationale }) => ({ id, role, content, rationale })),
+            conversation: conversation.map((entry) => ({
+              id: entry.id,
+              role: entry.role,
+              content: entry.content,
+              rationale: entry.rationale ?? null,
+            })),
             message,
             action: null,
           },
@@ -520,8 +526,13 @@ export function OnboardingWizard({
         }>(
           "wizard/spec_chat",
           {
-            conversation: messages.map(({ id, role, content, rationale }) => ({ id, role, content, rationale })),
-            message: action,
+            conversation: messages.map((entry) => ({
+              id: entry.id,
+              role: entry.role,
+              content: entry.content,
+              rationale: entry.rationale ?? null,
+            })),
+            message: null,
             action,
           },
           { pendingStep: "spec" },
@@ -689,19 +700,20 @@ export function OnboardingWizard({
 
   const handleValidateToken = React.useCallback(
     async (providerId: string, token: string, label?: string): Promise<TokenValidationResult | void> => {
-      if (!apiClientRef.current) {
+      const client = apiClientRef.current;
+      if (!client) {
         const unavailableError = new Error("MCP client unavailable");
         setTokenError(unavailableError.message);
         throw unavailableError;
       }
       setValidatingProviderId(providerId);
       try {
-        const validation = await apiClientRef.current.validateProviderToken({
+        const validation = await client.validateProviderToken({
           providerId,
           token,
           projectId: resolvedProjectId,
         });
-        const stored = await apiClientRef.current.storeProviderToken({
+        const stored = await client.storeProviderToken({
           providerId,
           token,
           projectId: resolvedProjectId,
@@ -709,7 +721,7 @@ export function OnboardingWizard({
         });
         setTokens((prev) => [stored, ...prev.filter((item) => item.id !== stored.id)]);
         setTokenError(null);
-        return validation;
+        return validation ?? undefined;
       } catch (error) {
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         setTokenError(normalizedError.message);
