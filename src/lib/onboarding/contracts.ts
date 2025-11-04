@@ -2,7 +2,13 @@ import { z } from "zod";
 
 const CONTRACT_CACHE = new Map<string, Promise<OnboardingContracts>>();
 
-type FetchLike = (input: string, init?: Record<string, unknown>) => Promise<{ ok?: boolean; text: () => Promise<string> }>;
+interface FetchResponse {
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<FetchResponse>;
 
 export interface ToolContract<TInput = unknown, TOutput = unknown> {
   name: string;
@@ -52,11 +58,23 @@ export async function loadOnboardingContracts(baseUrl?: string, fetchImpl?: Fetc
 }
 
 async function fetchContracts(baseUrl?: string, fetchImpl?: FetchLike): Promise<OnboardingContracts> {
-  const fetchCandidate = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined);
-  if (typeof fetchCandidate !== "function") {
+  let fetchFn: FetchLike | null = null;
+  if (fetchImpl) {
+    fetchFn = fetchImpl;
+  } else if (typeof globalThis.fetch === "function") {
+    fetchFn = async (input: string, init?: RequestInit) => {
+      const response = await globalThis.fetch(input, init);
+      return {
+        ok: response.ok,
+        status: response.status,
+        text: () => response.text(),
+      } satisfies FetchResponse;
+    };
+  }
+
+  if (!fetchFn) {
     throw new Error("Fetch implementation not available for contract loading");
   }
-  const fetchFn: FetchLike = fetchCandidate;
   const endpoints: string[] = [];
   if (baseUrl) {
     endpoints.push(`${baseUrl.replace(/\/$/, "")}/schemas/onboarding.yaml`);
@@ -144,13 +162,13 @@ function buildZodSchema(definition: SchemaNode | undefined, path: string[]): z.Z
         }
         shape[key] = propertySchema;
       }
-      schema = z.object(shape, { description: path.join(".") });
+      const baseObject = z.object(shape, { description: path.join(".") });
       if (definition.additionalProperties === false) {
-        schema = schema.strict();
+        schema = baseObject.strict();
       } else if (definition.additionalProperties === true || definition.additionalProperties === undefined) {
-        schema = schema.catchall(z.unknown());
+        schema = baseObject.catchall(z.unknown());
       } else {
-        schema = schema.catchall(buildZodSchema(definition.additionalProperties, [...path, "*"]));
+        schema = baseObject.catchall(buildZodSchema(definition.additionalProperties, [...path, "*"]));
       }
       break;
     }

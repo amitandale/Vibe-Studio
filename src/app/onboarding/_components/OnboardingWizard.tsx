@@ -100,6 +100,11 @@ type WizardToolName =
   | "wizard/ui_recommend"
   | "wizard/pr_dashboard";
 
+type WizardChatMessage = Omit<ChatMessage, "content"> & {
+  content?: string | null;
+  rationale?: string | null;
+};
+
 interface WizardRationales {
   spec?: string | null;
   stack?: string | null;
@@ -120,6 +125,20 @@ const INITIAL_MESSAGES: ChatMessage[] = [
     "Provide your product goals, constraints, data sources, auth model, and NFRs. The advisor drafts specs with iterative validation.",
   ),
 ];
+
+function normalizeWizardMessages(
+  messages: WizardChatMessage[] | null | undefined,
+  fallback: ChatMessage[],
+): ChatMessage[] {
+  if (!messages?.length) {
+    return fallback;
+  }
+  return messages.map((message) => ({
+    ...message,
+    content: message.content ?? "",
+    rationale: message.rationale ?? null,
+  }));
+}
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   if (typeof window !== "undefined" && window.btoa) {
@@ -415,9 +434,16 @@ export function OnboardingWizard({
       const validatedInput = contract.inputSchema.parse(payload);
       const attachmentsPayload = options?.files ? await encodeAttachments(options.files) : undefined;
       if (options?.message) {
+        const messageContent = options.message;
         setMessages((prev) => [
           ...prev,
-          { id: uuidv4(), role: options.role ?? "user", content: options.message, timestamp: Date.now() },
+          {
+            id: uuidv4(),
+            role: options.role ?? "user",
+            content: messageContent,
+            timestamp: Date.now(),
+            rationale: null,
+          },
         ]);
       }
       setPendingStep(options?.pendingStep ?? null);
@@ -443,10 +469,17 @@ export function OnboardingWizard({
 
   const handleSendMessage = React.useCallback(
     async (message: string) => {
-      const conversation = [...messages, { id: uuidv4(), role: "user" as ChatRole, content: message, timestamp: Date.now() }];
+      const userMessage: ChatMessage = {
+        id: uuidv4(),
+        role: "user",
+        content: message,
+        timestamp: Date.now(),
+        rationale: null,
+      };
+      const conversation = [...messages, userMessage];
       try {
         const result = await invokeWizardTool<{
-          messages: ChatMessage[];
+          messages: WizardChatMessage[];
           draft?: SpecsDraft | null;
           confirmation?: SpecsConfirmationSummary | null;
           rationale?: string | null;
@@ -460,7 +493,7 @@ export function OnboardingWizard({
           },
           { pendingStep: "spec", message, role: "user", files: attachments },
         );
-        setMessages(result.messages.length > 0 ? result.messages : conversation);
+        setMessages(normalizeWizardMessages(result.messages, conversation));
         setSpecDraft(result.draft ?? null);
         setSpecConfirmation(result.confirmation ?? null);
         setRationales((prev) => ({ ...prev, spec: result.rationale ?? null }));
@@ -479,7 +512,7 @@ export function OnboardingWizard({
     async (action: "refine" | "suggestion" | "clear" | "confirm") => {
       try {
         const result = await invokeWizardTool<{
-          messages: ChatMessage[];
+          messages: WizardChatMessage[];
           draft?: SpecsDraft | null;
           confirmation?: SpecsConfirmationSummary | null;
           rationale?: string | null;
@@ -493,9 +526,7 @@ export function OnboardingWizard({
           },
           { pendingStep: "spec" },
         );
-        if (result.messages?.length) {
-          setMessages(result.messages);
-        }
+        setMessages(normalizeWizardMessages(result.messages, messages));
         setSpecDraft(result.draft ?? null);
         setSpecConfirmation(result.confirmation ?? null);
         setRationales((prev) => ({ ...prev, spec: result.rationale ?? null }));
@@ -657,10 +688,11 @@ export function OnboardingWizard({
   }, [invokeWizardTool]);
 
   const handleValidateToken = React.useCallback(
-    async (providerId: string, token: string): Promise<TokenValidationResult | null> => {
+    async (providerId: string, token: string, label?: string): Promise<TokenValidationResult | void> => {
       if (!apiClientRef.current) {
-        setTokenError("MCP client unavailable");
-        return null;
+        const unavailableError = new Error("MCP client unavailable");
+        setTokenError(unavailableError.message);
+        throw unavailableError;
       }
       setValidatingProviderId(providerId);
       try {
@@ -673,14 +705,15 @@ export function OnboardingWizard({
           providerId,
           token,
           projectId: resolvedProjectId,
+          label,
         });
         setTokens((prev) => [stored, ...prev.filter((item) => item.id !== stored.id)]);
         setTokenError(null);
         return validation;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setTokenError(message);
-        return null;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        setTokenError(normalizedError.message);
+        throw normalizedError;
       } finally {
         setValidatingProviderId(null);
       }

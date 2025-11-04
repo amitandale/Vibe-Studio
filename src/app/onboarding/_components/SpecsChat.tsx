@@ -12,6 +12,7 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   timestamp: number;
+  rationale?: string | null;
 }
 
 interface SpecsChatProps {
