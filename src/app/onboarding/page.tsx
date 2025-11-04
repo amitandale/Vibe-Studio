@@ -7,11 +7,12 @@ import type { PageSearchParams } from "./page.state";
 import { resolveOnboardingPageState } from "./page.state";
 
 type OnboardingPageProps = {
-  searchParams?: PageSearchParams;
+  searchParams?: Promise<PageSearchParams>;
 };
 
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps): Promise<React.ReactNode> {
-  const resolution = resolveOnboardingPageState(searchParams, process.env);
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const resolution = resolveOnboardingPageState(resolvedSearchParams, process.env);
 
   if (resolution.kind === "missingProject") {
     return <MissingProjectId />;

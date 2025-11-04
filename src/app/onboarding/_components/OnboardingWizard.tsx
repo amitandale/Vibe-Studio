@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowRight } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { ConfirmModal } from "@/app/onboarding/_components/ConfirmModal";
 import type { ChatMessage, ChatRole } from "@/app/onboarding/_components/SpecsChat";
@@ -635,7 +635,6 @@ export function OnboardingWizard({
 
   const tokensComplete = React.useMemo(() => tokens.some((token) => token.status === "valid"), [tokens]);
   const specsComplete = snapshot.status === "SpecsConfirmed" || snapshot.status === "StackSelected" || snapshot.status === "Locked";
-  const stackComplete = snapshot.status === "StackSelected" || snapshot.status === "Locked";
   const templatesLocked = snapshot.status === "Locked";
   const logicComplete = Boolean(selectedLogicId);
   const uiComplete = Boolean(selectedUiId);
