@@ -64,3 +64,86 @@ export interface ToolDescription {
   schema?: Record<string, unknown>;
   enabled: boolean;
 }
+
+export interface ProviderDescriptor {
+  id: string;
+  name: string;
+  docsUrl?: string;
+  regions?: string[];
+}
+
+export type ProviderTokenStatus = "valid" | "invalid" | "unknown";
+
+export interface ProviderTokenRecord {
+  id: string;
+  providerId: string;
+  label?: string;
+  status: ProviderTokenStatus;
+  createdAt: string;
+  lastValidatedAt?: string;
+  scopes?: string[];
+}
+
+export interface TokenValidationRequest {
+  providerId: string;
+  token: string;
+  projectId?: string;
+}
+
+export interface TokenValidationResult {
+  providerId: string;
+  valid: boolean;
+  expiresAt?: string;
+  scopes?: string[];
+  message?: string;
+}
+
+export interface StoreTokenRequest {
+  providerId: string;
+  token: string;
+  label?: string;
+  projectId?: string;
+}
+
+export interface BusinessLogicRecommendation {
+  id: string;
+  title: string;
+  summary: string;
+  estimatedEffort?: string;
+  previewMarkdown?: string;
+}
+
+export interface UiTemplateRecommendation {
+  id: string;
+  name: string;
+  summary: string;
+  previewImageUrl?: string;
+  accessibilityNotes?: string;
+}
+
+export type PullRequestStatus = "open" | "draft" | "merged" | "closed" | "error";
+
+export interface PullRequestSummary {
+  id: string;
+  title: string;
+  status: PullRequestStatus;
+  createdAt: string;
+  updatedAt: string;
+  author?: string;
+  branch?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PullRequestDetail extends PullRequestSummary {
+  description?: string;
+  commits?: number;
+  reviews?: number;
+  lastRunId?: string;
+}
+
+export interface PullRequestMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt?: string;
+}
