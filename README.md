@@ -27,6 +27,10 @@ The detection status is surfaced in the top bar and the Settings page. A manual 
 | `studio.envDetection` | `true` | Enables the health badge and diagnostics. |
 | `studio.specBuilder` | `true` | Gates the spec builder shell at `/specs/new`. |
 | `studio.streamingPanes` | `false` | Enables live panes that subscribe to `GET /v1/stream/{id}`. |
+| `studio.onboarding` | `true` | Enables the onboarding wizard UI. |
+| `studio.onboardingStrict` | `true` | Redirects all studio routes to the wizard until onboarding completes. |
+| `studio.chatUploads` | `true` | Allows file uploads in the onboarding chat assistant. |
+| `studio.prDashboard` | `true` | Displays the PR dashboard at `/prs`. |
 
 Feature flags are defined in `src/lib/flags/index.ts`. Flip them during development before introducing a runtime configuration service.
 
@@ -66,3 +70,8 @@ Vitest runs unit and component suites. Added coverage for:
 - Tool list rendering with cache.
 
 Type-check with `pnpm typecheck` and run ESLint via `pnpm lint` before pushing.
+
+## Onboarding wizard
+
+The onboarding flow blocks other routes until the manifest reports a locked state. See [docs/onboarding.md](docs/onboarding.md)
+for step-by-step behaviour, feature flags, and auditing expectations.
