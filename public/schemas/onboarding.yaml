@@ -1,0 +1,325 @@
+tools:
+  wizard/spec_chat:
+    summary: Draft and iterate on onboarding specifications
+    input:
+      type: object
+      required:
+        - project_id
+        - trace_id
+        - conversation
+      properties:
+        project_id:
+          type: string
+        trace_id:
+          type: string
+        conversation:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - role
+              - content
+            properties:
+              id:
+                type: string
+              role:
+                type: string
+                enum: [system, user, assistant, event]
+              content:
+                type: string
+              timestamp:
+                type: number
+              rationale:
+                type: string
+                nullable: true
+              metadata:
+                type: object
+                additionalProperties: true
+            additionalProperties: false
+          default: []
+        message:
+          type: string
+          nullable: true
+        action:
+          type: string
+          nullable: true
+    output:
+      type: object
+      required:
+        - messages
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - role
+              - content
+              - timestamp
+            properties:
+              id:
+                type: string
+              role:
+                type: string
+              content:
+                type: string
+              timestamp:
+                type: number
+              rationale:
+                type: string
+                nullable: true
+            additionalProperties: true
+        draft:
+          type: object
+          nullable: true
+          additionalProperties: true
+        confirmation:
+          type: object
+          nullable: true
+          additionalProperties: true
+        rationale:
+          type: string
+          nullable: true
+        manifest:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+  wizard/stack_recommend:
+    summary: Recommend stacks based on collected requirements
+    input:
+      type: object
+      required:
+        - project_id
+        - trace_id
+      properties:
+        project_id:
+          type: string
+        trace_id:
+          type: string
+        selection:
+          type: object
+          nullable: true
+          properties:
+            stack_id:
+              type: string
+              nullable: true
+            template_ids:
+              type: array
+              items:
+                type: string
+          additionalProperties: false
+    output:
+      type: object
+      required:
+        - stacks
+      properties:
+        stacks:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - name
+              - summary
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              summary:
+                type: string
+              rationale:
+                type: string
+                nullable: true
+              templates:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+            additionalProperties: true
+        templates:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        rationale:
+          type: string
+          nullable: true
+        manifest:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+  wizard/logic_recommend:
+    summary: Suggest business logic scaffolding
+    input:
+      type: object
+      required:
+        - project_id
+        - trace_id
+      properties:
+        project_id:
+          type: string
+        trace_id:
+          type: string
+        selection:
+          type: object
+          nullable: true
+          properties:
+            logic_id:
+              type: string
+              nullable: true
+          additionalProperties: true
+    output:
+      type: object
+      required:
+        - options
+      properties:
+        options:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - title
+              - summary
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              summary:
+                type: string
+              preview_markdown:
+                type: string
+                nullable: true
+            additionalProperties: true
+        rationale:
+          type: string
+          nullable: true
+        manifest:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+  wizard/ui_recommend:
+    summary: Recommend UI templates and accessibility profiles
+    input:
+      type: object
+      required:
+        - project_id
+        - trace_id
+      properties:
+        project_id:
+          type: string
+        trace_id:
+          type: string
+        stack_id:
+          type: string
+          nullable: true
+        selection:
+          type: object
+          nullable: true
+          properties:
+            template_id:
+              type: string
+              nullable: true
+          additionalProperties: true
+    output:
+      type: object
+      required:
+        - options
+      properties:
+        options:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - name
+              - summary
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              summary:
+                type: string
+              preview_image_url:
+                type: string
+                nullable: true
+            additionalProperties: true
+        rationale:
+          type: string
+          nullable: true
+        manifest:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+  wizard/pr_dashboard:
+    summary: Summarize pull request activity and onboarding manifest
+    input:
+      type: object
+      required:
+        - project_id
+        - trace_id
+      properties:
+        project_id:
+          type: string
+        trace_id:
+          type: string
+        include_audit:
+          type: boolean
+          nullable: true
+    output:
+      type: object
+      required:
+        - pull_requests
+      properties:
+        pull_requests:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - title
+              - status
+              - createdAt
+              - updatedAt
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              status:
+                type: string
+              createdAt:
+                type: string
+              updatedAt:
+                type: string
+              author:
+                type: string
+                nullable: true
+              metadata:
+                type: object
+                nullable: true
+                additionalProperties: true
+            additionalProperties: true
+        audit_events:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        rationale:
+          type: string
+          nullable: true
+        manifest:
+          type: object
+          nullable: true
+          additionalProperties: true

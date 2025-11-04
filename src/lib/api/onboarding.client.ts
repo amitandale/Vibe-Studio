@@ -1,21 +1,9 @@
 "use client";
 
-import { AgentMcpClient } from "./client";
+import { AgentMcpClient, type TraceStreamOptions } from "./client";
 import { onboardingEventSchema, onboardingManifestSchema, type OnboardingEvent, type OnboardingManifest } from "@/lib/onboarding/schemas";
 
-export interface StartRunRequest {
-  task: string;
-  inputs?: Record<string, unknown>;
-  params?: Record<string, unknown>;
-}
-
-export interface StartRunResponse {
-  id: string;
-  status?: string;
-  created_at?: string;
-}
-
-export interface StreamHandlers {
+export interface TraceStreamHandlers {
   onEvent: (event: OnboardingEvent) => void;
   onError?: (error: unknown) => void;
   onOpen?: () => void;
@@ -58,36 +46,10 @@ export class OnboardingClient {
     }
   }
 
-  async startRun(body: StartRunRequest, traceId?: string): Promise<StartRunResponse> {
-    const response = await fetch(`${this.baseUrl}/v1/runs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...(traceId ? { "x-trace-id": traceId } : {}),
-      },
-      body: JSON.stringify({
-        ...body,
-        project_id: this.projectId,
-        trace_id: traceId,
-      }),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Failed to start onboarding run (${response.status}): ${text}`);
-    }
-    const payload = (await response.json()) as StartRunResponse;
-    if (!payload?.id) {
-      throw new Error("Run response missing identifier");
-    }
-    return payload;
-  }
-
-  streamRun(runId: string, handlers: StreamHandlers, traceId?: string): () => void {
-    return this.client.streamRun(runId, {
-      onEvent: (raw) => {
+  streamTrace(traceId: string, handlers: TraceStreamHandlers): () => void {
+    const options: TraceStreamOptions<unknown> = {
+      onEvent: (payload) => {
         try {
-          const payload = (raw.payload ?? raw) as unknown;
           const parsed = onboardingEventSchema.parse(payload);
           handlers.onEvent(parsed);
         } catch (error) {
@@ -97,8 +59,8 @@ export class OnboardingClient {
       onError: handlers.onError,
       onOpen: handlers.onOpen,
       retryDelays: [500, 1500, 3000],
-      traceId,
       projectId: this.projectId,
-    });
+    };
+    return this.client.streamTrace(traceId, options);
   }
 }

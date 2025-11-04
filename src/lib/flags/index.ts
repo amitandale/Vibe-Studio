@@ -27,6 +27,8 @@ export const featureFlags = {
   "studio.onboardingStrict": resolveBooleanFlag("NEXT_PUBLIC_ONBOARDING_STRICT", true),
   "studio.chatUploads": resolveBooleanFlag("NEXT_PUBLIC_ONBOARDING_CHAT_UPLOADS", true),
   "studio.prDashboard": resolveBooleanFlag("NEXT_PUBLIC_PR_DASHBOARD", true),
+  "studio.onboardingWizardTools": true,
+  "studio.prDashboardWizard": true,
 } as const satisfies Record<string, boolean>;
 
 export type FeatureFlagKey = keyof typeof featureFlags;

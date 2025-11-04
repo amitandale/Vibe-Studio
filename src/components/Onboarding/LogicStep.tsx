@@ -9,6 +9,7 @@ interface LogicStepProps {
   onSelectOption: (optionId: string) => void;
   onPreviewOption: (option: BusinessLogicOption) => void;
   disabled?: boolean;
+  rationale?: string | null;
 }
 
 export function LogicStep({
@@ -17,6 +18,7 @@ export function LogicStep({
   onSelectOption,
   onPreviewOption,
   disabled = false,
+  rationale,
 }: LogicStepProps): React.ReactNode {
   return (
     <div className="space-y-4">
@@ -35,6 +37,7 @@ export function LogicStep({
         onPreview={onPreviewOption}
         disabled={disabled}
       />
+      {rationale ? <p className="text-xs text-slate-500">{rationale}</p> : null}
     </div>
   );
 }

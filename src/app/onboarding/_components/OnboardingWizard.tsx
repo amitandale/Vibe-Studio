@@ -17,63 +17,35 @@ import { SummaryStep } from "@/components/Onboarding/SummaryStep";
 import { WizardProgressBar } from "@/components/WizardProgressBar";
 import type { BusinessLogicOption } from "@/components/BusinessLogicSelect";
 import type { UiTemplateOption } from "@/components/UIUXSelect";
-import { OnboardingClient, type StartRunRequest } from "@/lib/api/onboarding.client";
+import { OnboardingClient } from "@/lib/api/onboarding.client";
 import { AgentMcpClient } from "@/lib/api/client";
-import type { ProviderDescriptor, ProviderTokenRecord, TokenValidationResult } from "@/lib/api/types";
+import type {
+  ProviderDescriptor,
+  ProviderTokenRecord,
+  TokenValidationResult,
+  ToolAttachmentPayload,
+  PullRequestSummary,
+} from "@/lib/api/types";
 import {
   onboardingManifestSchema,
+  onboardingStatusSchema,
   type OnboardingManifest,
-  type OnboardingEvent,
+  type OnboardingStatus,
+  type SpecsDraft,
+  type SpecsConfirmationSummary,
   type StackRecommendation,
   type TemplateDescriptor,
 } from "@/lib/onboarding/schemas";
-import { OnboardingStateMachine, type OnboardingSnapshot, resolveProjectId } from "@/lib/onboarding/state";
+import { loadOnboardingContracts, type OnboardingContracts } from "@/lib/onboarding/contracts";
 import { persistTraceId, readTraceId } from "@/lib/onboarding/storage";
 import { detectMcpEnvironment, type McpEnvironmentSnapshot } from "@/lib/env/detectMcpEnv";
+import { resolveProjectId } from "@/lib/onboarding/state";
 import "@/styles/onboarding.css";
 
 const OFFLINE_PROVIDERS: ProviderDescriptor[] = [
   { id: "openai", name: "OpenAI", docsUrl: "https://platform.openai.com/docs" },
   { id: "anthropic", name: "Anthropic", docsUrl: "https://docs.anthropic.com" },
   { id: "azure-openai", name: "Azure OpenAI", docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/" },
-];
-
-const FALLBACK_LOGIC_OPTIONS: BusinessLogicOption[] = [
-  {
-    id: "baseline-orchestration",
-    title: "Baseline Orchestration",
-    summary: "Generates CRUD + analytics flows with queue-backed retries and structured logging.",
-    estimatedEffort: "2d",
-    previewMarkdown:
-      "## Baseline orchestration\n- Command bus\n- Background sync\n- Observability hooks\n- Automated tests",
-  },
-  {
-    id: "growth-experimentation",
-    title: "Growth Experimentation",
-    summary: "Adds feature flag scaffolding, A/B harness, and redshift event streaming.",
-    estimatedEffort: "3d",
-  },
-];
-
-const FALLBACK_UI_OPTIONS: UiTemplateOption[] = [
-  {
-    id: "neon-dashboard",
-    name: "Neon Dashboard",
-    summary: "Dark mode dashboard optimized for monitoring agent telemetry and conversation reviews.",
-    accessibilityNotes: "Meets WCAG AA contrast, keyboard accessible modals.",
-    previewImageUrl: "/images/ui-previews/neon-dashboard.png",
-  },
-  {
-    id: "aurora-studio",
-    name: "Aurora Studio",
-    summary: "Gradient-forward marketing shell with hero blocks, feature grids, and CTA loops.",
-    accessibilityNotes: "High contrast CTA buttons, prefers-reduced-motion safe.",
-  },
-  {
-    id: "atlas-console",
-    name: "Atlas Console",
-    summary: "Operational console layout with split-pane editors, PR summaries, and audit timeline.",
-  },
 ];
 
 const STEP_CONFIG = [
@@ -119,13 +91,92 @@ interface OnboardingWizardProps {
   allowReset: boolean;
 }
 
-type PendingStep = "tokens" | "specs" | "stack" | "templates" | "logic" | "ui" | "reset" | null;
+type PendingStep = StepId | "templates" | "reset" | null;
+
+type WizardToolName =
+  | "wizard/spec_chat"
+  | "wizard/stack_recommend"
+  | "wizard/logic_recommend"
+  | "wizard/ui_recommend"
+  | "wizard/pr_dashboard";
+
+type WizardChatMessage = ChatMessage & {
+  rationale?: string | null;
+};
+
+type WizardChatMessageState = WizardChatMessage;
+
+interface WizardRationales {
+  spec?: string | null;
+  stack?: string | null;
+  logic?: string | null;
+  ui?: string | null;
+  summary?: string | null;
+}
 
 const INITIAL_ENVIRONMENT: McpEnvironmentSnapshot = {
   status: "OFFLINE",
   baseUrl: null,
   timestamp: Date.now(),
 };
+
+const INITIAL_MESSAGES: WizardChatMessageState[] = [
+  createSystemMessage("Welcome to the Vibe-Studio onboarding flow."),
+  createSystemMessage(
+    "Provide your product goals, constraints, data sources, auth model, and NFRs. The advisor drafts specs with iterative validation.",
+  ),
+];
+
+function normalizeWizardMessages(
+  messages: WizardChatMessage[] | null | undefined,
+  fallback: WizardChatMessageState[],
+): WizardChatMessageState[] {
+  if (!messages?.length) {
+    return fallback;
+  }
+  return messages.map((message) => ({
+    ...message,
+    content: message.content ?? "",
+    rationale: message.rationale ?? null,
+  }));
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  if (typeof window !== "undefined" && window.btoa) {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return window.btoa(binary);
+  }
+  const globalBuffer =
+    typeof globalThis !== "undefined"
+      ? ((globalThis as Record<string, unknown>).Buffer as
+          | { from: (data: ArrayBuffer | Uint8Array) => { toString: (encoding: string) => string } }
+          | undefined)
+      : undefined;
+  if (globalBuffer) {
+    return globalBuffer.from(buffer).toString("base64");
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+  return btoa(binary);
+}
+
+function toAttachmentPayload(file: File): Promise<ToolAttachmentPayload> {
+  return file.arrayBuffer().then((buffer) => ({
+    name: file.name,
+    data: arrayBufferToBase64(buffer),
+    mime_type: file.type || "application/octet-stream",
+  }));
+}
 
 export function OnboardingWizard({
   projectId,
@@ -138,29 +189,37 @@ export function OnboardingWizard({
   const resolvedProjectId = React.useMemo(() => projectId || resolveProjectId(), [projectId]);
   const onboardingClientRef = React.useRef<OnboardingClient | null>(null);
   const apiClientRef = React.useRef<AgentMcpClient | null>(null);
-  const machineRef = React.useRef<OnboardingStateMachine>(
-    new OnboardingStateMachine({ projectId: resolvedProjectId, manifest: manifest ?? undefined }),
-  );
-  const [snapshot, setSnapshot] = React.useState<OnboardingSnapshot>(() => machineRef.current.getSnapshot());
-  const [messages, setMessages] = React.useState<ChatMessage[]>(() => [
-    createSystemMessage("Welcome to the Vibe-Studio onboarding flow."),
-    createSystemMessage(
-      "Provide your product goals, constraints, data sources, auth model, and NFRs. The advisor drafts specs with iterative validation.",
-    ),
-  ]);
+  const contractsRef = React.useRef<OnboardingContracts | null>(null);
+  const [contractsError, setContractsError] = React.useState<string | null>(null);
   const [environment, setEnvironment] = React.useState<McpEnvironmentSnapshot>(INITIAL_ENVIRONMENT);
   const [providers, setProviders] = React.useState<ProviderDescriptor[]>(OFFLINE_PROVIDERS);
   const [tokens, setTokens] = React.useState<ProviderTokenRecord[]>([]);
-  const [logicOptions, setLogicOptions] = React.useState<BusinessLogicOption[]>(FALLBACK_LOGIC_OPTIONS);
-  const [uiOptions, setUiOptions] = React.useState<UiTemplateOption[]>(FALLBACK_UI_OPTIONS);
-  const [selectedLogicId, setSelectedLogicId] = React.useState<string | null>(null);
-  const [selectedUiId, setSelectedUiId] = React.useState<string | null>(null);
-  const [tokenError, setTokenError] = React.useState<string | null>(null);
   const [validatingProviderId, setValidatingProviderId] = React.useState<string | null>(null);
+  const [tokenError, setTokenError] = React.useState<string | null>(null);
+  const [messages, setMessages] = React.useState<WizardChatMessageState[]>(INITIAL_MESSAGES);
+  const [specDraft, setSpecDraft] = React.useState<SpecsDraft | null>(null);
+  const [specConfirmation, setSpecConfirmation] = React.useState<SpecsConfirmationSummary | null>(null);
+  const [stackRecommendations, setStackRecommendations] = React.useState<StackRecommendation[]>([]);
+  const [templates, setTemplates] = React.useState<TemplateDescriptor[]>(manifest?.templates?.items ?? []);
+  const [selectedTemplatesMap, setSelectedTemplatesMap] = React.useState<Record<string, boolean>>(() => {
+    if (!manifest?.templates?.items) {
+      return {};
+    }
+    return Object.fromEntries(manifest.templates.items.map((item) => [item.id, true]));
+  });
+  const [selectedStackId, setSelectedStackId] = React.useState<string | null>(manifest?.stack?.id ?? null);
+  const [logicOptions, setLogicOptions] = React.useState<BusinessLogicOption[]>([]);
+  const [selectedLogicId, setSelectedLogicId] = React.useState<string | null>(null);
+  const [uiOptions, setUiOptions] = React.useState<UiTemplateOption[]>([]);
+  const [selectedUiId, setSelectedUiId] = React.useState<string | null>(null);
+  const [pullRequests, setPullRequests] = React.useState<PullRequestSummary[]>([]);
+  const [auditEvents, setAuditEvents] = React.useState<unknown[]>([]);
+  const [rationales, setRationales] = React.useState<WizardRationales>({});
+  const [status, setStatus] = React.useState<OnboardingStatus>(manifest?.status ?? "NotStarted");
+  const [manifestState, setManifestState] = React.useState<OnboardingManifest | null>(manifest ?? null);
+  const [pendingStep, setPendingStep] = React.useState<PendingStep>(null);
   const [errorBanner, setErrorBanner] = React.useState<string | null>(null);
   const [resetOpen, setResetOpen] = React.useState(false);
-  const [pendingStep, setPendingStep] = React.useState<PendingStep>(null);
-  const [selectedTemplatesMap, setSelectedTemplatesMap] = React.useState<Record<string, boolean>>({});
   const [attachments, setAttachments] = React.useState<File[]>([]);
   const [lastCopiedAt, setLastCopiedAt] = React.useState<number | null>(null);
   const traceId = React.useMemo(() => {
@@ -175,19 +234,6 @@ export function OnboardingWizard({
     onboardingClientRef.current = new OnboardingClient(baseUrl, resolvedProjectId);
     apiClientRef.current = new AgentMcpClient(baseUrl);
   }, [baseUrl, resolvedProjectId]);
-
-  React.useEffect(() => {
-    if (!manifest) {
-      return;
-    }
-    try {
-      const parsed = onboardingManifestSchema.parse(manifest);
-      machineRef.current.applyManifest(parsed);
-      setSnapshot(machineRef.current.getSnapshot());
-    } catch (error) {
-      console.warn("Unable to parse onboarding manifest", error);
-    }
-  }, [manifest]);
 
   React.useEffect(() => {
     persistTraceId(resolvedProjectId, traceId);
@@ -206,21 +252,135 @@ export function OnboardingWizard({
   }, [baseUrl]);
 
   React.useEffect(() => {
-    setSelectedTemplatesMap((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const template of snapshot.templates) {
-        next[template.id] = prev[template.id] ?? true;
-      }
-      return next;
-    });
-  }, [snapshot.templates]);
+    let active = true;
+    void loadOnboardingContracts(baseUrl)
+      .then((contracts) => {
+        if (active) {
+          contractsRef.current = contracts;
+          setContractsError(null);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setContractsError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl]);
 
   React.useEffect(() => {
+    if (!manifest) {
+      return;
+    }
+    try {
+      const parsed = onboardingManifestSchema.parse(manifest);
+      setManifestState(parsed);
+      setStatus(parsed.status);
+      if (parsed.stack?.id) {
+        setSelectedStackId(parsed.stack.id);
+      }
+      if (parsed.templates?.items) {
+        setTemplates(parsed.templates.items);
+        setSelectedTemplatesMap((prev) => {
+          const next: Record<string, boolean> = {};
+          for (const template of parsed.templates?.items ?? []) {
+            next[template.id] = prev[template.id] ?? true;
+          }
+          return next;
+        });
+      }
+    } catch (error) {
+      console.warn("Unable to parse onboarding manifest", error);
+    }
+  }, [manifest]);
+
+  React.useEffect(() => {
+    const client = onboardingClientRef.current;
+    if (!client) {
+      return;
+    }
+    let cancelled = false;
+    const loadManifest = async () => {
+      try {
+        const fresh = await client.fetchManifest(traceId);
+        if (!cancelled && fresh) {
+          setManifestState(fresh);
+          setStatus(onboardingStatusSchema.parse(fresh.status));
+          if (fresh.stack?.id) {
+            setSelectedStackId(fresh.stack.id);
+          }
+          if (fresh.templates?.items) {
+            setTemplates(fresh.templates.items);
+            setSelectedTemplatesMap((prev) => {
+              const next: Record<string, boolean> = {};
+              for (const template of fresh.templates?.items ?? []) {
+                next[template.id] = prev[template.id] ?? true;
+              }
+              return next;
+            });
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to fetch onboarding manifest", error);
+        }
+      }
+    };
+    void loadManifest();
+    return () => {
+      cancelled = true;
+    };
+  }, [traceId]);
+
+  React.useEffect(() => {
+    const client = onboardingClientRef.current;
+    if (!client) {
+      return;
+    }
+    streamCancelRef.current?.();
+    streamCancelRef.current = client.streamTrace(traceId, {
+      onEvent: (event) => {
+        switch (event.type) {
+          case "SPECS_DRAFT_UPDATED":
+            setSpecDraft(event.draft);
+            setStatus((current) => (current === "NotStarted" ? "SpecsDrafting" : current));
+            break;
+          case "SPECS_CONFIRMATION_READY":
+            setSpecConfirmation(event.summary);
+            setStatus((current) => (current === "SpecsDrafting" ? "SpecsDrafting" : current));
+            break;
+          case "STACKS_RECOMMENDED":
+            setStackRecommendations(event.items);
+            setStatus((current) => (current === "SpecsDrafting" ? "SpecsConfirmed" : current));
+            break;
+          case "STACK_SELECTED":
+            setSelectedStackId(event.id);
+            setStatus((current) => (current === "SpecsConfirmed" ? "StackSelected" : current));
+            break;
+          case "TEMPLATES_LISTED":
+            setTemplates(event.items);
+            break;
+          case "TEMPLATES_LOCKED":
+            setStatus("Locked");
+            break;
+          case "ERROR":
+            setErrorBanner(event.message);
+            break;
+          default:
+            break;
+        }
+      },
+      onError: (error) => {
+        console.warn("Onboarding event stream error", error);
+      },
+    });
     return () => {
       streamCancelRef.current?.();
       streamCancelRef.current = null;
     };
-  }, []);
+  }, [traceId]);
 
   const fetchTokens = React.useCallback(async () => {
     if (!apiClientRef.current) {
@@ -241,343 +401,392 @@ export function OnboardingWizard({
     }
   }, [resolvedProjectId]);
 
-  const fetchWizardRecommendations = React.useCallback(async () => {
-    if (!apiClientRef.current) {
-      return;
-    }
-    try {
-      const [logic, ui] = await Promise.all([
-        apiClientRef.current.listBusinessLogic(resolvedProjectId),
-        apiClientRef.current.listUiTemplates(resolvedProjectId),
-      ]);
-      if (logic.length > 0) {
-        setLogicOptions(logic.map((item): BusinessLogicOption => ({
-          id: item.id,
-          title: item.title,
-          summary: item.summary,
-          estimatedEffort: item.estimatedEffort ?? "",
-          previewMarkdown: item.previewMarkdown,
-        })));
-      }
-      if (ui.length > 0) {
-        setUiOptions(ui.map((item): UiTemplateOption => ({
-          id: item.id,
-          name: item.name,
-          summary: item.summary,
-          previewImageUrl: item.previewImageUrl,
-          accessibilityNotes: item.accessibilityNotes,
-        })));
-      }
-    } catch (error) {
-      console.warn("Unable to fetch wizard recommendations", error);
-    }
-  }, [resolvedProjectId]);
-
   React.useEffect(() => {
     void fetchTokens();
-    void fetchWizardRecommendations();
-  }, [fetchTokens, fetchWizardRecommendations]);
+  }, [fetchTokens]);
 
-  React.useEffect(() => {
-    const client = onboardingClientRef.current;
-    if (!client) {
-      return;
+  const encodeAttachments = React.useCallback(async (files: File[]): Promise<ToolAttachmentPayload[] | undefined> => {
+    if (files.length === 0) {
+      return undefined;
     }
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const fresh = await client.fetchManifest(traceId);
-        if (!cancelled && fresh) {
-          machineRef.current.applyManifest(fresh);
-          setSnapshot(machineRef.current.getSnapshot());
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setErrorBanner(error instanceof Error ? error.message : String(error));
-        }
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [traceId]);
-
-  const pushMessage = React.useCallback((role: ChatRole, content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: uuidv4(),
-        role,
-        content,
-        timestamp: Date.now(),
-      },
-    ]);
+    const encoded = await Promise.all(files.map((file) => toAttachmentPayload(file)));
+    return encoded;
   }, []);
 
-  const handleEvent = React.useCallback(
-    (event: OnboardingEvent) => {
-      machineRef.current.applyEvent(event);
-      setSnapshot(machineRef.current.getSnapshot());
-      switch (event.type) {
-        case "SPECS_CONFIRMATION_READY":
-          pushMessage("assistant", "System requirements summary is ready for review.");
-          setPendingStep((current) => (current === "specs" ? null : current));
-          break;
-        case "STACKS_RECOMMENDED":
-          pushMessage("assistant", "Recommended stacks have been prepared.");
-          setPendingStep((current) => (current === "specs" ? null : current));
-          break;
-        case "STACK_SELECTED":
-          pushMessage("assistant", `Stack ${event.id} has been recorded.`);
-          setPendingStep((current) => (current === "stack" ? null : current));
-          break;
-        case "TEMPLATES_LISTED":
-          pushMessage("assistant", "Templates catalog refreshed for the selected stack.");
-          setPendingStep((current) => (current === "stack" ? null : current));
-          break;
-        case "TEMPLATES_LOCKED":
-          pushMessage("assistant", "Templates locked successfully. Proceed to business logic selection.");
-          setPendingStep((current) => (current === "templates" ? null : current));
-          break;
-        case "ERROR":
-          pushMessage("event", `Error ${event.code}: ${event.message}`);
-          setErrorBanner(event.message);
-          setPendingStep(null);
-          break;
-        default:
-          break;
+  const invokeWizardTool = React.useCallback(
+    async <TResult, TInput extends Record<string, unknown> = Record<string, unknown>>(
+      toolName: WizardToolName,
+      input: TInput,
+      options?: { pendingStep?: PendingStep; message?: string; role?: ChatRole; files?: File[] },
+    ): Promise<TResult> => {
+      if (!apiClientRef.current) {
+        throw new Error("MCP client unavailable. Check your environment configuration.");
       }
-    },
-    [pushMessage],
-  );
-
-  const startRun = React.useCallback(
-    async (payload: StartRunRequest, step: PendingStep, opts?: { message?: string; role?: ChatRole }) => {
-      if (!onboardingClientRef.current) {
-        setErrorBanner("MCP client unavailable. Check your environment configuration.");
-        return;
+      const contracts = contractsRef.current;
+      const contract = contracts?.tools?.[toolName];
+      if (!contract) {
+        throw new Error(`Tool contract missing for ${toolName}`);
       }
-      if (opts?.message) {
-        pushMessage(opts.role ?? "user", opts.message);
+      const payload = {
+        project_id: resolvedProjectId,
+        trace_id: traceId,
+        ...input,
+      } as Record<string, unknown>;
+      const validatedInput = contract.inputSchema.parse(payload);
+      const attachmentsPayload = options?.files ? await encodeAttachments(options.files) : undefined;
+      if (typeof options?.message === "string") {
+        const messageContent = options.message;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: uuidv4(),
+            role: options.role ?? "user",
+            content: messageContent,
+            timestamp: Date.now(),
+            rationale: null,
+          },
+        ]);
       }
-      setPendingStep(step);
+      setPendingStep(options?.pendingStep ?? null);
       setErrorBanner(null);
       try {
-        streamCancelRef.current?.();
-        const run = await onboardingClientRef.current.startRun(payload, traceId);
-        streamCancelRef.current = onboardingClientRef.current.streamRun(
-          run.id,
-          {
-            onEvent: handleEvent,
-            onError: (error) => {
-              setErrorBanner(error instanceof Error ? error.message : String(error));
-              setPendingStep(null);
-            },
-          },
+        const response = await apiClientRef.current.invokeTool<TResult>(toolName, {
+          input: validatedInput,
+          projectId: resolvedProjectId,
           traceId,
-        );
+          attachments: attachmentsPayload,
+        });
+        const parsed = contract.outputSchema.parse(response.result) as TResult;
+        return parsed;
       } catch (error) {
         setErrorBanner(error instanceof Error ? error.message : String(error));
+        throw error;
+      } finally {
         setPendingStep(null);
       }
     },
-    [handleEvent, pushMessage, traceId],
+    [encodeAttachments, resolvedProjectId, traceId],
   );
 
   const handleSendMessage = React.useCallback(
-    (message: string) => {
-      startRun(
-        {
-          task: "onboarding/specs_draft",
-          inputs: { message, draft: snapshot.specsDraft ?? {} },
-          params: { mode: "conversational", attachments: attachments.map((file) => ({ name: file.name, size: file.size })) },
-        },
-        "specs",
-        { message },
-      );
+    async (message: string) => {
+      const userMessage: WizardChatMessageState = {
+        id: uuidv4(),
+        role: "user",
+        content: message,
+        timestamp: Date.now(),
+        rationale: null,
+      };
+      const conversation: WizardChatMessageState[] = [...messages, userMessage];
+      try {
+        const result = await invokeWizardTool<{
+          messages: WizardChatMessage[];
+          draft?: SpecsDraft | null;
+          confirmation?: SpecsConfirmationSummary | null;
+          rationale?: string | null;
+          manifest?: OnboardingManifest | null;
+        }>(
+          "wizard/spec_chat",
+          {
+            conversation: conversation.map((entry) => ({
+              id: entry.id,
+              role: entry.role,
+              content: entry.content,
+              rationale: entry.rationale ?? null,
+            })),
+            message,
+            action: null,
+          },
+          { pendingStep: "spec", message, role: "user", files: attachments },
+        );
+        setMessages(normalizeWizardMessages(result.messages, conversation));
+        setSpecDraft(result.draft ?? null);
+        setSpecConfirmation(result.confirmation ?? null);
+        setRationales((prev) => ({ ...prev, spec: result.rationale ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+          setStatus(onboardingStatusSchema.parse(result.manifest.status));
+        }
+      } catch (error) {
+        console.warn("Failed to send spec message", error);
+      }
     },
-    [attachments, snapshot.specsDraft, startRun],
+    [attachments, invokeWizardTool, messages],
   );
 
   const handleSpecsAction = React.useCallback(
-    (action: "refine" | "suggestion" | "clear" | "confirm") => {
-      switch (action) {
-        case "refine":
-          startRun(
-            {
-              task: "onboarding/specs_refine",
-              inputs: { draft: snapshot.specsDraft ?? {}, action: "refine" },
-            },
-            "specs",
-          );
-          break;
-        case "suggestion":
-          startRun(
-            {
-              task: "onboarding/specs_suggestion",
-              inputs: { draft: snapshot.specsDraft ?? {}, action: "suggest" },
-            },
-            "specs",
-          );
-          break;
-        case "clear":
-          startRun(
-            {
-              task: "onboarding/specs_clear",
-              inputs: { draft: snapshot.specsDraft ?? {}, action: "clear" },
-            },
-            "specs",
-          );
-          break;
-        case "confirm":
-          startRun(
-            {
-              task: "onboarding/specs_confirm",
-              inputs: { draft: snapshot.specsDraft ?? {} },
-            },
-            "specs",
-          );
-          break;
-        default:
-          break;
+    async (action: "refine" | "suggestion" | "clear" | "confirm") => {
+      try {
+        const result = await invokeWizardTool<{
+          messages: WizardChatMessage[];
+          draft?: SpecsDraft | null;
+          confirmation?: SpecsConfirmationSummary | null;
+          rationale?: string | null;
+          manifest?: OnboardingManifest | null;
+        }>(
+          "wizard/spec_chat",
+          {
+            conversation: messages.map((entry) => ({
+              id: entry.id,
+              role: entry.role,
+              content: entry.content,
+              rationale: entry.rationale ?? null,
+            })),
+            message: null,
+            action,
+          },
+          { pendingStep: "spec" },
+        );
+        setMessages(normalizeWizardMessages(result.messages, messages));
+        setSpecDraft(result.draft ?? null);
+        setSpecConfirmation(result.confirmation ?? null);
+        setRationales((prev) => ({ ...prev, spec: result.rationale ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+          setStatus(onboardingStatusSchema.parse(result.manifest.status));
+        }
+      } catch (error) {
+        console.warn("Failed to process spec action", error);
       }
     },
-    [snapshot.specsDraft, startRun],
+    [invokeWizardTool, messages],
   );
 
   const handleSelectStack = React.useCallback(
-    (stackId: string) => {
-      startRun(
-        {
-          task: "onboarding/stack_select",
-          inputs: { stack_id: stackId, draft: snapshot.specsDraft ?? {} },
-        },
-        "stack",
-      );
+    async (stackId: string) => {
+      try {
+        const selection = {
+          stack_id: stackId,
+          template_ids: Object.entries(selectedTemplatesMap)
+            .filter(([, selected]) => selected)
+            .map(([id]) => id),
+        };
+        const result = await invokeWizardTool<{
+          stacks: StackRecommendation[];
+          templates?: TemplateDescriptor[] | null;
+          rationale?: string | null;
+          manifest?: OnboardingManifest | null;
+        }>(
+          "wizard/stack_recommend",
+          { selection },
+          { pendingStep: "stack" },
+        );
+        setStackRecommendations(result.stacks ?? []);
+        if (result.templates) {
+          setTemplates(result.templates);
+        }
+        setSelectedStackId(stackId);
+        setRationales((prev) => ({ ...prev, stack: result.rationale ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+          setStatus(onboardingStatusSchema.parse(result.manifest.status));
+        }
+      } catch (error) {
+        console.warn("Failed to record stack selection", error);
+      }
     },
-    [snapshot.specsDraft, startRun],
+    [invokeWizardTool, selectedTemplatesMap],
   );
 
-  const handleLockTemplates = React.useCallback(() => {
-    if (!snapshot.selectedStackId) {
+  const handleLockTemplates = React.useCallback(async () => {
+    if (!selectedStackId) {
       setErrorBanner("Select a stack before locking templates.");
       return;
     }
-    const selections = snapshot.templates.filter((template) => selectedTemplatesMap[template.id]);
-    if (selections.length === 0) {
+    const templateIds = Object.entries(selectedTemplatesMap)
+      .filter(([, selected]) => selected)
+      .map(([id]) => id);
+    if (templateIds.length === 0) {
       setErrorBanner("Select at least one template before locking.");
       return;
     }
-    startRun(
-      {
-        task: "onboarding/templates_lock",
-        inputs: {
-          stack_id: snapshot.selectedStackId,
-          templates: selections.map((template) => ({
-            id: template.id,
-            digest: template.digest,
-            source: template.source,
-          })),
-        },
-      },
-      "templates",
-    );
-  }, [selectedTemplatesMap, snapshot.selectedStackId, snapshot.templates, startRun]);
-
-  const handleReset = React.useCallback(() => {
-    setResetOpen(false);
-    startRun(
-      {
-        task: "onboarding/reset",
-        inputs: { project_id: resolvedProjectId },
-      },
-      "reset",
-    );
-    machineRef.current.reset();
-    setSnapshot(machineRef.current.getSnapshot());
-    setMessages([createSystemMessage("Onboarding has been reset. Start drafting specs to begin again.")]);
-    setPendingStep(null);
-    setSelectedTemplatesMap({});
-    setSelectedLogicId(null);
-    setSelectedUiId(null);
-    setAttachments([]);
-    setTokens([]);
-    setLastCopiedAt(null);
-  }, [resolvedProjectId, startRun]);
-
-  const handleSelectAllTemplates = React.useCallback(() => {
-    setSelectedTemplatesMap(() => {
-      const next: Record<string, boolean> = {};
-      for (const template of snapshot.templates) {
-        next[template.id] = true;
+    try {
+      const result = await invokeWizardTool<{
+        stacks: StackRecommendation[];
+        templates?: TemplateDescriptor[] | null;
+        manifest?: OnboardingManifest | null;
+        rationale?: string | null;
+      }>(
+        "wizard/stack_recommend",
+        { selection: { stack_id: selectedStackId, template_ids: templateIds } },
+        { pendingStep: "templates" },
+      );
+      if (result.templates) {
+        setTemplates(result.templates);
       }
-      return next;
-    });
-  }, [snapshot.templates]);
+      setRationales((prev) => ({ ...prev, stack: result.rationale ?? prev.stack ?? null }));
+      if (result.manifest) {
+        setManifestState(result.manifest);
+        setStatus(onboardingStatusSchema.parse(result.manifest.status));
+      }
+    } catch (error) {
+      console.warn("Failed to lock templates", error);
+    }
+  }, [invokeWizardTool, selectedStackId, selectedTemplatesMap]);
 
-  const handleToggleTemplate = React.useCallback((templateId: string) => {
-    setSelectedTemplatesMap((prev) => ({
-      ...prev,
-      [templateId]: !prev[templateId],
-    }));
-  }, []);
+  const handleLogicSelection = React.useCallback(
+    async (optionId: string) => {
+      try {
+        const result = await invokeWizardTool<{
+          options: BusinessLogicOption[];
+          rationale?: string | null;
+          manifest?: OnboardingManifest | null;
+        }>(
+          "wizard/logic_recommend",
+          { stack_id: selectedStackId, selection: { option_id: optionId } },
+          { pendingStep: "logic" },
+        );
+        if (result.options) {
+          setLogicOptions(result.options);
+        }
+        setSelectedLogicId(optionId);
+        setRationales((prev) => ({ ...prev, logic: result.rationale ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+        }
+      } catch (error) {
+        console.warn("Failed to select logic option", error);
+      }
+    },
+    [invokeWizardTool, selectedStackId],
+  );
+
+  const handleUiSelection = React.useCallback(
+    async (templateId: string) => {
+      try {
+        const result = await invokeWizardTool<{
+          options: UiTemplateOption[];
+          rationale?: string | null;
+          manifest?: OnboardingManifest | null;
+        }>(
+          "wizard/ui_recommend",
+          { stack_id: selectedStackId, selection: { template_id: templateId } },
+          { pendingStep: "ui" },
+        );
+        if (result.options) {
+          setUiOptions(result.options);
+        }
+        setSelectedUiId(templateId);
+        setRationales((prev) => ({ ...prev, ui: result.rationale ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+        }
+      } catch (error) {
+        console.warn("Failed to select UI option", error);
+      }
+    },
+    [invokeWizardTool, selectedStackId],
+  );
+
+  const refreshDashboard = React.useCallback(async () => {
+    try {
+      const result = await invokeWizardTool<{
+        pull_requests: PullRequestSummary[];
+        audit_events?: unknown[] | null;
+        rationale?: string | null;
+        manifest?: OnboardingManifest | null;
+      }>("wizard/pr_dashboard", { include_audit: true }, { pendingStep: "summary" });
+      setPullRequests(result.pull_requests ?? []);
+      setAuditEvents(result.audit_events ?? []);
+      setRationales((prev) => ({ ...prev, summary: result.rationale ?? null }));
+      if (result.manifest) {
+        setManifestState(result.manifest);
+        setStatus(onboardingStatusSchema.parse(result.manifest.status));
+      }
+    } catch (error) {
+      console.warn("Failed to refresh PR dashboard", error);
+    }
+  }, [invokeWizardTool]);
 
   const handleValidateToken = React.useCallback(
     async (providerId: string, token: string, label?: string): Promise<TokenValidationResult | void> => {
-      if (!apiClientRef.current) {
-        throw new Error("Token API unavailable in this environment");
+      const client = apiClientRef.current;
+      if (!client) {
+        const unavailableError = new Error("MCP client unavailable");
+        setTokenError(unavailableError.message);
+        throw unavailableError;
       }
       setValidatingProviderId(providerId);
-      setTokenError(null);
-      setPendingStep("tokens");
       try {
-        const result = await apiClientRef.current.validateProviderToken({ providerId, token, projectId: resolvedProjectId });
-        if (!result.valid) {
-          setPendingStep(null);
-          return result;
-        }
-        await apiClientRef.current.storeProviderToken({ providerId, token, label, projectId: resolvedProjectId });
-        await fetchTokens();
-        setPendingStep(null);
-        return result;
-      } catch (error) {
-        setTokenError(error instanceof Error ? error.message : String(error));
-        // Allow offline fallback by storing metadata locally
-        const fallbackRecord: ProviderTokenRecord = {
-          id: `local-${Date.now()}`,
+        const validation = await client.validateProviderToken({
           providerId,
+          token,
+          projectId: resolvedProjectId,
+        });
+        const stored = await client.storeProviderToken({
+          providerId,
+          token,
+          projectId: resolvedProjectId,
           label,
-          createdAt: new Date().toISOString(),
-          status: "valid",
-          lastValidatedAt: new Date().toISOString(),
-        };
-        setTokens((prev) => [...prev.filter((item) => item.id !== fallbackRecord.id), fallbackRecord]);
-        setPendingStep(null);
-        return { providerId, valid: true, message: "Token stored locally (offline mode)." };
+        });
+        setTokens((prev) => [stored, ...prev.filter((item) => item.id !== stored.id)]);
+        setTokenError(null);
+        return validation ?? undefined;
+      } catch (error) {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        setTokenError(normalizedError.message);
+        throw normalizedError;
       } finally {
         setValidatingProviderId(null);
       }
     },
-    [fetchTokens, resolvedProjectId],
+    [resolvedProjectId],
   );
 
   const handleRemoveToken = React.useCallback(
     async (tokenId: string) => {
       if (!apiClientRef.current) {
-        setTokens((prev) => prev.filter((token) => token.id !== tokenId));
         return;
       }
       try {
         await apiClientRef.current.deleteProviderToken(tokenId, resolvedProjectId);
-        await fetchTokens();
+        setTokens((prev) => prev.filter((item) => item.id !== tokenId));
       } catch (error) {
-        console.warn("Failed to delete token", error);
-        setTokens((prev) => prev.filter((token) => token.id !== tokenId));
+        setTokenError(error instanceof Error ? error.message : String(error));
       }
     },
-    [fetchTokens, resolvedProjectId],
+    [resolvedProjectId],
   );
+
+  const handleReset = React.useCallback(async () => {
+    setResetOpen(false);
+    setAttachments([]);
+    setMessages(INITIAL_MESSAGES);
+    setSpecDraft(null);
+    setSpecConfirmation(null);
+    setStackRecommendations([]);
+    setTemplates([]);
+    setSelectedTemplatesMap({});
+    setSelectedStackId(null);
+    setLogicOptions([]);
+    setSelectedLogicId(null);
+    setUiOptions([]);
+    setSelectedUiId(null);
+    setPullRequests([]);
+    setAuditEvents([]);
+    setRationales({});
+    setStatus("NotStarted");
+    setManifestState(null);
+    try {
+      await invokeWizardTool("wizard/pr_dashboard", { action: "reset" }, { pendingStep: "reset" });
+    } catch (error) {
+      console.warn("Reset request failed", error);
+    }
+  }, [invokeWizardTool]);
+
+  const handleSelectAllTemplates = React.useCallback(() => {
+    setSelectedTemplatesMap((prev) => {
+      const next = { ...prev };
+      for (const template of templates) {
+        next[template.id] = true;
+      }
+      return next;
+    });
+  }, [templates]);
+
+  const handleToggleTemplate = React.useCallback((templateId: string) => {
+    setSelectedTemplatesMap((prev) => ({ ...prev, [templateId]: !prev[templateId] }));
+  }, []);
 
   const handleAttachmentsUpload = React.useCallback((files: FileList) => {
     setAttachments(Array.from(files));
@@ -587,77 +796,38 @@ export function OnboardingWizard({
     setAttachments([]);
   }, []);
 
-  const handlePreviewLogic = React.useCallback((option: BusinessLogicOption) => {
-    pushMessage(
-      "system",
-      option.previewMarkdown
-        ? `Previewing ${option.title}:\n${option.previewMarkdown}`
-        : `Previewing ${option.title}. Detailed markdown unavailable.`,
-    );
-  }, [pushMessage]);
-
-  const handlePreviewUi = React.useCallback((optionId: string) => {
-    const option = uiOptions.find((item) => item.id === optionId);
-    if (!option) {
-      return;
+  const activeStepId = React.useMemo<StepId>(() => {
+    if (status === "Locked") {
+      return "summary";
     }
-    pushMessage(
-      "system",
-      `Preview ${option.name}: ${option.summary}${option.accessibilityNotes ? `\nAccessibility: ${option.accessibilityNotes}` : ""}`,
-    );
-  }, [pushMessage, uiOptions]);
-
-  const handlePreviewStack = React.useCallback((stackId: string) => {
-    const stack = snapshot.stacks.find((item) => item.id === stackId);
-    if (!stack) {
-      return;
+    if (selectedUiId) {
+      return "summary";
     }
-    pushMessage(
-      "system",
-      `Stack ${stack.id} rationale:\n${stack.rationale ?? "No rationale provided."}`,
-    );
-  }, [pushMessage, snapshot.stacks]);
-
-  const handlePreviewTemplate = React.useCallback((templateId: string) => {
-    const template = snapshot.templates.find((item) => item.id === templateId);
-    if (!template) {
-      return;
-    }
-    pushMessage(
-      "system",
-      `Template ${template.id} (digest ${template.digest}). ${template.source ? `Source: ${template.source}` : ""}`,
-    );
-  }, [pushMessage, snapshot.templates]);
-
-  const navigateToDashboard = React.useCallback(() => {
-    router.push("/");
-  }, [router]);
-
-  const tokensComplete = React.useMemo(() => tokens.some((token) => token.status === "valid"), [tokens]);
-  const specsComplete = snapshot.status === "SpecsConfirmed" || snapshot.status === "StackSelected" || snapshot.status === "Locked";
-  const templatesLocked = snapshot.status === "Locked";
-  const logicComplete = Boolean(selectedLogicId);
-  const uiComplete = Boolean(selectedUiId);
-  const summaryComplete = templatesLocked && logicComplete && uiComplete;
-
-  const activeStepId: StepId = React.useMemo(() => {
-    if (!tokensComplete) {
-      return "tokens";
-    }
-    if (!specsComplete) {
-      return "spec";
-    }
-    if (!templatesLocked) {
-      return "stack";
-    }
-    if (!logicComplete) {
-      return "logic";
-    }
-    if (!uiComplete) {
+    if (selectedLogicId) {
       return "ui";
     }
-    return "summary";
-  }, [logicComplete, specsComplete, templatesLocked, tokensComplete, uiComplete]);
+    if (selectedStackId) {
+      return "logic";
+    }
+    if (specDraft || specConfirmation) {
+      return "stack";
+    }
+    if (tokens.length > 0) {
+      return "spec";
+    }
+    return "tokens";
+  }, [selectedLogicId, selectedStackId, selectedUiId, specConfirmation, specDraft, status, tokens.length]);
+
+  const templatesLocked = React.useMemo(() => status === "Locked" || (manifestState?.templates?.lockDigest ?? null) !== null, [
+    manifestState?.templates?.lockDigest,
+    status,
+  ]);
+
+  const logicComplete = React.useMemo(() => Boolean(selectedLogicId), [selectedLogicId]);
+  const uiComplete = React.useMemo(() => Boolean(selectedUiId), [selectedUiId]);
+  const summaryComplete = React.useMemo(() => status === "Locked", [status]);
+  const tokensComplete = React.useMemo(() => tokens.length > 0, [tokens.length]);
+  const specsComplete = React.useMemo(() => Boolean(specDraft) || Boolean(specConfirmation), [specDraft, specConfirmation]);
 
   const completedSteps = React.useMemo(() => {
     const done: StepId[] = [];
@@ -667,7 +837,7 @@ export function OnboardingWizard({
     if (specsComplete) {
       done.push("spec");
     }
-    if (templatesLocked) {
+    if (selectedStackId) {
       done.push("stack");
     }
     if (logicComplete) {
@@ -680,42 +850,109 @@ export function OnboardingWizard({
       done.push("summary");
     }
     return done;
-  }, [logicComplete, specsComplete, summaryComplete, templatesLocked, tokensComplete, uiComplete]);
+  }, [logicComplete, selectedStackId, specsComplete, summaryComplete, tokensComplete, uiComplete]);
 
   const selectedTemplateIds = React.useMemo(
     () => Object.entries(selectedTemplatesMap).filter(([, selected]) => selected).map(([templateId]) => templateId),
     [selectedTemplatesMap],
   );
 
+  const lockedTemplates = React.useMemo(() => {
+    if (templatesLocked) {
+      return templates.filter((template) => selectedTemplatesMap[template.id]);
+    }
+    return templates;
+  }, [selectedTemplatesMap, templates, templatesLocked]);
+
   const selectedStack = React.useMemo(() => {
-    if (!snapshot.selectedStackId) {
+    if (!selectedStackId) {
       return null;
     }
-    const existing = snapshot.stacks.find((stack) => stack.id === snapshot.selectedStackId);
-    if (existing) {
-      return existing;
-    }
-    if (snapshot.manifest?.stack) {
-      return {
-        id: snapshot.manifest.stack.id,
-        pros: [],
-        cons: [],
-        risks: [],
-        opsNotes: [],
-        expectedCosts: undefined,
-        fit_score: 0.5,
-        rationale: snapshot.manifest.stack.rationaleRef,
-      } as StackRecommendation;
-    }
-    return null;
-  }, [snapshot.manifest?.stack, snapshot.selectedStackId, snapshot.stacks]);
+    return stackRecommendations.find((stack) => stack.id === selectedStackId) ?? null;
+  }, [selectedStackId, stackRecommendations]);
 
-  const lockedTemplates = React.useMemo(() => {
-    if (snapshot.status !== "Locked") {
-      return snapshot.templates;
+  const handleCopySummary = React.useCallback(() => {
+    setLastCopiedAt(Date.now());
+  }, []);
+
+  React.useEffect(() => {
+    if (activeStepId !== "stack" || stackRecommendations.length > 0 || pendingStep === "stack") {
+      return;
     }
-    return snapshot.templates;
-  }, [snapshot.status, snapshot.templates]);
+    void invokeWizardTool<{
+      stacks: StackRecommendation[];
+      templates?: TemplateDescriptor[] | null;
+      rationale?: string | null;
+      manifest?: OnboardingManifest | null;
+    }>("wizard/stack_recommend", {}, { pendingStep: "stack" })
+      .then((result) => {
+        setStackRecommendations(result.stacks ?? []);
+        if (result.templates) {
+          setTemplates(result.templates);
+        }
+        setRationales((prev) => ({ ...prev, stack: result.rationale ?? prev.stack ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+          setStatus(onboardingStatusSchema.parse(result.manifest.status));
+        }
+      })
+      .catch((error) => {
+        console.warn("Failed to load stack recommendations", error);
+      });
+  }, [activeStepId, invokeWizardTool, pendingStep, stackRecommendations.length]);
+
+  React.useEffect(() => {
+    if (activeStepId !== "logic" || logicOptions.length > 0 || pendingStep === "logic") {
+      return;
+    }
+    void invokeWizardTool<{
+      options: BusinessLogicOption[];
+      rationale?: string | null;
+      manifest?: OnboardingManifest | null;
+    }>("wizard/logic_recommend", { stack_id: selectedStackId ?? null }, { pendingStep: "logic" })
+      .then((result) => {
+        if (result.options) {
+          setLogicOptions(result.options);
+        }
+        setRationales((prev) => ({ ...prev, logic: result.rationale ?? prev.logic ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+        }
+      })
+      .catch((error) => {
+        console.warn("Failed to load logic options", error);
+      });
+  }, [activeStepId, invokeWizardTool, logicOptions.length, pendingStep, selectedStackId]);
+
+  React.useEffect(() => {
+    if (activeStepId !== "ui" || uiOptions.length > 0 || pendingStep === "ui") {
+      return;
+    }
+    void invokeWizardTool<{
+      options: UiTemplateOption[];
+      rationale?: string | null;
+      manifest?: OnboardingManifest | null;
+    }>("wizard/ui_recommend", { stack_id: selectedStackId ?? null }, { pendingStep: "ui" })
+      .then((result) => {
+        if (result.options) {
+          setUiOptions(result.options);
+        }
+        setRationales((prev) => ({ ...prev, ui: result.rationale ?? prev.ui ?? null }));
+        if (result.manifest) {
+          setManifestState(result.manifest);
+        }
+      })
+      .catch((error) => {
+        console.warn("Failed to load UI recommendations", error);
+      });
+  }, [activeStepId, invokeWizardTool, pendingStep, selectedStackId, uiOptions.length]);
+
+  React.useEffect(() => {
+    if (!templatesLocked || pullRequests.length > 0) {
+      return;
+    }
+    void refreshDashboard();
+  }, [pullRequests.length, refreshDashboard, templatesLocked]);
 
   if (!onboardingEnabled) {
     return (
@@ -754,15 +991,19 @@ export function OnboardingWizard({
 
       <WizardProgressBar steps={STEP_CONFIG} activeStepId={activeStepId} completedStepIds={completedSteps} />
 
-      {errorBanner ? (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {errorBanner}
+      {contractsError ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          {contractsError}
         </div>
+      ) : null}
+
+      {errorBanner ? (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{errorBanner}</div>
       ) : null}
 
       {pendingStep ? (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-2 text-xs uppercase tracking-[0.3em] text-emerald-200">
-          {pendingStep === "specs"
+          {pendingStep === "spec"
             ? "Drafting system requirements..."
             : pendingStep === "stack"
               ? "Recording stack selection..."
@@ -774,7 +1015,11 @@ export function OnboardingWizard({
                     ? "Syncing business logic selection..."
                     : pendingStep === "ui"
                       ? "Saving UI template..."
-                      : "Processing..."}
+                      : pendingStep === "summary"
+                        ? "Refreshing PR dashboard..."
+                        : pendingStep === "reset"
+                          ? "Resetting onboarding state..."
+                          : "Processing..."}
         </div>
       ) : null}
 
@@ -794,130 +1039,118 @@ export function OnboardingWizard({
           {activeStepId === "spec" ? (
             <SpecStep
               messages={messages}
-              draft={snapshot.specsDraft}
-              confirmation={snapshot.confirmation}
-              isStreaming={pendingStep === "specs"}
-              disabled={pendingStep === "specs"}
+              draft={specDraft}
+              confirmation={specConfirmation}
+              isStreaming={pendingStep === "spec"}
+              disabled={pendingStep === "spec"}
+              attachments={attachments}
               onSendMessage={handleSendMessage}
               onAction={handleSpecsAction}
               onUpload={handleAttachmentsUpload}
               onClearUploads={handleClearUploads}
+              rationale={rationales.spec ?? null}
             />
           ) : null}
 
           {activeStepId === "stack" ? (
-            // Step 3: Recommend stacks using agent-mcp and capture template locks per Codex prompting guidance.
             <StackStep
-              stacks={snapshot.stacks as StackRecommendation[]}
-              selectedStackId={snapshot.selectedStackId}
+              stacks={stackRecommendations}
+              selectedStackId={selectedStackId}
               onSelectStack={handleSelectStack}
-              onPreviewStack={handlePreviewStack}
-              templates={snapshot.templates as TemplateDescriptor[]}
+              onPreviewStack={() => undefined}
+              templates={templates}
               selectedTemplateIds={selectedTemplateIds}
               onToggleTemplate={handleToggleTemplate}
-              onPreviewTemplate={handlePreviewTemplate}
+              onPreviewTemplate={() => undefined}
               onLockTemplates={handleLockTemplates}
               disabled={pendingStep === "stack" || pendingStep === "templates"}
-              lockDisabled={Object.values(selectedTemplatesMap).every((selected) => !selected)}
+              lockDisabled={templatesLocked}
+              onSelectAllTemplates={handleSelectAllTemplates}
+              rationale={rationales.stack ?? null}
             />
           ) : null}
 
           {activeStepId === "logic" ? (
-            // Step 4: Surface business logic scaffolds from agent-mcp recommendations for Codex-style review.
             <LogicStep
               options={logicOptions}
               selectedOptionId={selectedLogicId}
-              onSelectOption={(optionId) => setSelectedLogicId(optionId)}
-              onPreviewOption={handlePreviewLogic}
+              onSelectOption={handleLogicSelection}
+              onPreviewOption={() => undefined}
               disabled={pendingStep === "logic"}
+              rationale={rationales.logic ?? null}
             />
           ) : null}
 
           {activeStepId === "ui" ? (
-            // Step 5: Present UI/UX templates with accessibility notes for final confirmation.
             <UIStep
               options={uiOptions}
               selectedOptionId={selectedUiId}
-              onSelectOption={(optionId) => setSelectedUiId(optionId)}
-              onPreviewOption={handlePreviewUi}
+              onSelectOption={handleUiSelection}
+              onPreviewOption={() => undefined}
               disabled={pendingStep === "ui"}
+              rationale={rationales.ui ?? null}
             />
           ) : null}
 
           {activeStepId === "summary" ? (
-            // Step 6: Summarize onboarding selections for audit logs before enabling navigation.
             <SummaryStep
               selectedStack={selectedStack}
               lockedTemplates={lockedTemplates}
-              logicOption={logicOptions.find((item) => item.id === selectedLogicId) ?? null}
-              uiOption={uiOptions.find((item) => item.id === selectedUiId) ?? null}
-              onCopySummary={() => setLastCopiedAt(Date.now())}
+              logicOption={logicOptions.find((option) => option.id === selectedLogicId) ?? null}
+              uiOption={uiOptions.find((option) => option.id === selectedUiId) ?? null}
+              pullRequests={pullRequests}
+              auditEvents={auditEvents}
+              rationale={rationales.summary ?? null}
+              onCopySummary={handleCopySummary}
+              onRefreshDashboard={refreshDashboard}
             />
           ) : null}
         </section>
 
-        <aside className="flex flex-col gap-6">
+        <aside className="flex flex-col gap-4">
           <div className="rounded-2xl border border-slate-800/70 bg-slate-950/70 p-4 text-sm text-slate-300">
-            <p className="font-rajdhani text-[11px] uppercase tracking-[0.4em] text-slate-500">Activity Log</p>
-            <div className="mt-2 space-y-3">
-              {messages.slice(-5).map((message) => (
-                <article key={message.id} className="rounded-lg border border-slate-800/60 bg-slate-900/60 px-3 py-2 text-xs">
-                  <p className="font-semibold text-slate-200">{message.role === "assistant" ? "Advisor" : message.role}</p>
-                  <p className="mt-1 whitespace-pre-wrap text-slate-300">{message.content}</p>
-                </article>
-              ))}
-            </div>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Status</p>
+            <p className="mt-2 font-semibold text-white">{status}</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Trace <code className="rounded bg-slate-900 px-1 py-0.5 text-[10px]">{traceId}</code>
+            </p>
+            {manifestState?.updatedAt ? (
+              <p className="mt-2 text-xs text-slate-500">Updated {new Date(manifestState.updatedAt).toLocaleString()}</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void router.push("/")}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-200 transition hover:border-slate-700 hover:bg-slate-800"
+            >
+              <ArrowRight className="h-4 w-4" /> Go to studio
+            </button>
           </div>
 
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-950/70 p-4 text-sm text-slate-300">
-            <p className="font-rajdhani text-[11px] uppercase tracking-[0.4em] text-slate-500">Quick Actions</p>
-            <div className="mt-3 flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={handleSelectAllTemplates}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/60 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-200 transition hover:border-slate-700 hover:bg-slate-800"
-              >
-                Select all templates
-              </button>
+          {allowReset ? (
+            <div className="rounded-2xl border border-slate-800/70 bg-slate-950/70 p-4 text-sm text-slate-300">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Reset</p>
+              <p className="mt-2 text-sm text-slate-400">
+                Resetting clears specs, stack selections, and locked templates. Stored tokens remain intact.
+              </p>
               <button
                 type="button"
                 onClick={() => setResetOpen(true)}
-                disabled={!allowReset}
-                className="inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-500/20"
               >
                 Reset onboarding
               </button>
-              <button
-                type="button"
-                onClick={navigateToDashboard}
-                disabled={!summaryComplete}
-                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <ArrowRight className="h-3.5 w-3.5" /> Launch studio
-              </button>
             </div>
-            {lastCopiedAt ? (
-              <p className="mt-3 text-xs text-slate-500">Summary copied {new Date(lastCopiedAt).toLocaleTimeString()}.</p>
-            ) : null}
-          </div>
-
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-950/70 p-4 text-sm text-slate-300">
-            <p className="font-rajdhani text-[11px] uppercase tracking-[0.4em] text-slate-500">Run Diagnostics</p>
-            <p className="mt-2 text-xs text-slate-400">
-              Runs are executed against <code className="rounded bg-slate-900 px-1 py-0.5 text-[10px]">{baseUrl}</code>. Trace ID
-              <code className="ml-1 rounded bg-slate-900 px-1 py-0.5 text-[10px]">{traceId}</code> attaches to SSE streams for auditing.
-            </p>
-          </div>
+          ) : null}
         </aside>
       </div>
 
       <ConfirmModal
-        title="Reset onboarding?"
-        description="This action clears the manifest, specs, stack selection, and template locks. You will need to start the onboarding flow again from Step 1."
-        confirmLabel="Reset"
         open={resetOpen}
+        title="Reset onboarding session"
+        description="This clears draft specs, stack selections, and template locks. Tokens are preserved."
+        confirmLabel="Reset"
         onOpenChange={setResetOpen}
-        onConfirm={handleReset}
+        onConfirm={() => void handleReset()}
       />
     </div>
   );

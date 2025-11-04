@@ -9,6 +9,7 @@ interface UIStepProps {
   onSelectOption: (optionId: string) => void;
   onPreviewOption: (optionId: string) => void;
   disabled?: boolean;
+  rationale?: string | null;
 }
 
 export function UIStep({
@@ -17,6 +18,7 @@ export function UIStep({
   onSelectOption,
   onPreviewOption,
   disabled = false,
+  rationale,
 }: UIStepProps): React.ReactNode {
   return (
     <div className="space-y-4">
@@ -35,6 +37,7 @@ export function UIStep({
         onPreview={onPreviewOption}
         disabled={disabled}
       />
+      {rationale ? <p className="text-xs text-slate-500">{rationale}</p> : null}
     </div>
   );
 }
