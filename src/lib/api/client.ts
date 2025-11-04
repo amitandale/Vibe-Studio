@@ -17,6 +17,8 @@ import {
   PullRequestDetail,
   PullRequestStatus,
   PullRequestMessage,
+  ToolInvocationRequest,
+  ToolInvocationResponse,
 } from "./types";
 
 type FetchInit = RequestInit & { retryDelays?: number[]; traceId?: string; query?: Record<string, string> };
@@ -29,6 +31,16 @@ export interface StreamOptions {
   onError?: (error: unknown) => void;
   onOpen?: () => void;
   traceId?: string;
+  projectId?: string;
+}
+
+export interface TraceStreamOptions<TEvent = unknown> {
+  signal?: AbortSignal;
+  lastEventId?: string;
+  retryDelays?: number[];
+  onEvent: (event: TEvent) => void;
+  onError?: (error: unknown) => void;
+  onOpen?: () => void;
   projectId?: string;
 }
 
@@ -201,6 +213,38 @@ export class AgentMcpClient {
     });
   }
 
+  async invokeTool<TResult = unknown, TInput = unknown>(
+    toolName: string,
+    request: ToolInvocationRequest<TInput>,
+    init?: FetchInit,
+  ): Promise<ToolInvocationResponse<TResult>> {
+    const path = `/v1/tools/${encodeURIComponent(toolName)}`;
+    const body: Record<string, unknown> = {};
+    if (request.input !== undefined) {
+      body.input = request.input;
+    }
+    if (request.attachments) {
+      body.attachments = request.attachments;
+    }
+    if (request.metadata) {
+      body.metadata = request.metadata;
+    }
+    if (request.projectId) {
+      body.project_id = request.projectId;
+    }
+    if (request.traceId) {
+      body.trace_id = request.traceId;
+    }
+    return this.request<ToolInvocationResponse<TResult>>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      ...init,
+    });
+  }
+
   streamRun(runId: string, options: StreamOptions): () => void {
     if (typeof window === "undefined") {
       throw new Error("Run streaming is only available in the browser");
@@ -271,6 +315,83 @@ export class AgentMcpClient {
         abort();
       } else {
         sig.addEventListener("abort", abort, { once: true });
+      }
+    }
+
+    start();
+    return () => {
+      abortController.abort();
+      teardown();
+    };
+  }
+
+  streamTrace<TEvent>(traceId: string, options: TraceStreamOptions<TEvent>): () => void {
+    if (typeof window === "undefined") {
+      throw new Error("Event streaming is only available in the browser");
+    }
+
+    const url = new URL(`${this.baseUrl}/v1/events/${encodeURIComponent(traceId)}`);
+    if (options.lastEventId) {
+      url.searchParams.set("last_event_id", options.lastEventId);
+    }
+    if (options.projectId) {
+      url.searchParams.set("project_id", options.projectId);
+    }
+
+    const retryDelays = options.retryDelays ?? [500, 1500, 3000];
+    let retryAttempts = 0;
+    let closed = false;
+    let eventSource: EventSource | null = null;
+
+    const teardown = () => {
+      closed = true;
+      eventSource?.close();
+      eventSource = null;
+    };
+
+    const start = () => {
+      if (closed) {
+        return;
+      }
+      eventSource?.close();
+      eventSource = new EventSource(url.toString(), { withCredentials: false });
+      eventSource.onopen = () => {
+        retryAttempts = 0;
+        options.onOpen?.();
+      };
+      eventSource.onmessage = (message: MessageEvent<string>) => {
+        if (!message.data) {
+          return;
+        }
+        try {
+          const payload = JSON.parse(message.data) as TEvent;
+          options.onEvent(payload);
+        } catch (error) {
+          options.onError?.(error);
+        }
+      };
+      eventSource.onerror = (error) => {
+        eventSource?.close();
+        if (closed) {
+          return;
+        }
+        const delay = retryDelays[Math.min(retryAttempts, retryDelays.length - 1)];
+        retryAttempts += 1;
+        options.onError?.(error);
+        setTimeout(start, delay);
+      };
+    };
+
+    const abortController = new AbortController();
+    const signals = [abortController.signal, options.signal].filter(Boolean) as AbortSignal[];
+    const abort = () => {
+      teardown();
+    };
+    for (const signal of signals) {
+      if (signal.aborted) {
+        abort();
+      } else {
+        signal.addEventListener("abort", abort, { once: true });
       }
     }
 

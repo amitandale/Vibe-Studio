@@ -11,10 +11,12 @@ interface SpecStepProps {
   confirmation: SpecsConfirmationSummary | null;
   isStreaming: boolean;
   disabled: boolean;
+  attachments: File[];
   onSendMessage: (message: string) => void;
   onAction: (action: "refine" | "suggestion" | "clear" | "confirm") => void;
   onUpload: (files: FileList) => void;
   onClearUploads: () => void;
+  rationale?: string | null;
 }
 
 export function SpecStep({
@@ -23,27 +25,13 @@ export function SpecStep({
   confirmation,
   isStreaming,
   disabled,
+  attachments,
   onSendMessage,
   onAction,
   onUpload,
   onClearUploads,
+  rationale,
 }: SpecStepProps): React.ReactNode {
-  const [attachments, setAttachments] = React.useState<File[]>([]);
-
-  const handleUpload = React.useCallback(
-    (files: FileList) => {
-      const selected = Array.from(files);
-      setAttachments(selected);
-      onUpload(files);
-    },
-    [onUpload],
-  );
-
-  const handleClear = React.useCallback(() => {
-    setAttachments([]);
-    onClearUploads();
-  }, [onClearUploads]);
-
   return (
     <div className="space-y-4">
       <SpecsChat
@@ -63,8 +51,8 @@ export function SpecStep({
         <FileUploader
           accept=".md,.pdf,.png,.jpg,.jpeg,.txt"
           multiple
-          onFilesSelected={handleUpload}
-          onClear={handleClear}
+          onFilesSelected={onUpload}
+          onClear={onClearUploads}
           className="mt-3"
           disabled={disabled}
         />
@@ -76,6 +64,9 @@ export function SpecStep({
               </li>
             ))}
           </ul>
+        ) : null}
+        {rationale ? (
+          <p className="mt-3 text-xs text-slate-500">{rationale}</p>
         ) : null}
       </div>
     </div>

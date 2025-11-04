@@ -2,14 +2,24 @@
 
 import React from "react";
 import { Loader2, MessageSquare, RefreshCw, SendHorizontal } from "lucide-react";
+import { v4 as uuidv4 } from "uuid";
 import { AgentMcpClient } from "@/lib/api/client";
 import type { PullRequestDetail, PullRequestMessage, PullRequestStatus, PullRequestSummary } from "@/lib/api/types";
+import { loadOnboardingContracts, type OnboardingContracts } from "@/lib/onboarding/contracts";
+import { readTraceId, persistTraceId } from "@/lib/onboarding/storage";
 import { extractConversation, formatPullRequestStatus, isActionableStatus, sortPullRequests } from "@/lib/prs";
 import { cn } from "@/lib/utils";
 
 interface DraftMessage {
   content: string;
   sending: boolean;
+}
+
+interface DashboardResult {
+  pull_requests: PullRequestSummary[];
+  detail?: PullRequestDetail | null;
+  rationale?: string | null;
+  audit_events?: unknown[] | null;
 }
 
 function resolveBaseUrl(): string | null {
@@ -33,7 +43,14 @@ function resolveProjectId(): string {
 export default function PullRequestsPage(): React.ReactNode {
   const projectId = React.useMemo(() => resolveProjectId(), []);
   const [baseUrl, setBaseUrl] = React.useState<string | null>(() => resolveBaseUrl());
+  const traceId = React.useMemo(() => {
+    const existing = readTraceId(projectId);
+    const value = existing ?? uuidv4();
+    persistTraceId(projectId, value);
+    return value;
+  }, [projectId]);
   const clientRef = React.useRef<AgentMcpClient | null>(null);
+  const contractsRef = React.useRef<OnboardingContracts | null>(null);
   const [items, setItems] = React.useState<PullRequestSummary[]>([]);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [detail, setDetail] = React.useState<PullRequestDetail | null>(null);
@@ -41,6 +58,9 @@ export default function PullRequestsPage(): React.ReactNode {
   const [loadingDetail, setLoadingDetail] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<DraftMessage>({ content: "", sending: false });
+  const [dashboardRationale, setDashboardRationale] = React.useState<string | null>(null);
+  const [auditEvents, setAuditEvents] = React.useState<unknown[]>([]);
+  const [contractsReady, setContractsReady] = React.useState(false);
 
   React.useEffect(() => {
     if (!baseUrl) {
@@ -50,47 +70,96 @@ export default function PullRequestsPage(): React.ReactNode {
     clientRef.current = new AgentMcpClient(baseUrl);
   }, [baseUrl]);
 
+  React.useEffect(() => {
+    let active = true;
+    void loadOnboardingContracts(baseUrl ?? undefined)
+      .then((contracts) => {
+        if (active) {
+          contractsRef.current = contracts;
+          setContractsReady(true);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : String(err));
+          setContractsReady(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl]);
+
+  const invokeDashboardTool = React.useCallback(
+    async (input: Record<string, unknown>): Promise<DashboardResult> => {
+      if (!clientRef.current) {
+        throw new Error("MCP client unavailable");
+      }
+      const contract = contractsRef.current?.tools?.["wizard/pr_dashboard"];
+      if (!contract) {
+        throw new Error("Dashboard tool contract missing");
+      }
+      const payload = {
+        project_id: projectId,
+        trace_id: traceId,
+        ...input,
+      } as Record<string, unknown>;
+      const validatedInput = contract.inputSchema.parse(payload);
+      const response = await clientRef.current.invokeTool<DashboardResult>("wizard/pr_dashboard", {
+        input: validatedInput,
+        projectId,
+        traceId,
+      });
+      return contract.outputSchema.parse(response.result) as DashboardResult;
+    },
+    [projectId, traceId],
+  );
+
   const fetchList = React.useCallback(async () => {
-    if (!clientRef.current) {
+    if (!contractsRef.current) {
       return;
     }
     setLoadingList(true);
     setError(null);
     try {
-      const response = await clientRef.current.listPullRequests(projectId);
-      setItems(sortPullRequests(response));
-      if (!selectedId && response.length > 0) {
-        setSelectedId(response[0].id);
+      const result = await invokeDashboardTool({ include_audit: false });
+      setDashboardRationale(result.rationale ?? null);
+      const sorted = sortPullRequests(result.pull_requests ?? []);
+      setItems(sorted);
+      if (!selectedId && sorted.length > 0) {
+        setSelectedId(sorted[0].id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoadingList(false);
     }
-  }, [projectId, selectedId]);
+  }, [invokeDashboardTool, selectedId]);
 
   const fetchDetail = React.useCallback(
     async (id: string) => {
-      if (!clientRef.current) {
+      if (!contractsRef.current) {
         return;
       }
       setLoadingDetail(true);
       setError(null);
       try {
-        const response = await clientRef.current.fetchPullRequest(projectId, id);
-        setDetail(response);
+        const result = await invokeDashboardTool({ pull_request_id: id, include_audit: true });
+        setDetail(result.detail ?? null);
+        setAuditEvents(result.audit_events ?? []);
+        setDashboardRationale(result.rationale ?? null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoadingDetail(false);
       }
     },
-    [projectId],
+    [invokeDashboardTool],
   );
 
   React.useEffect(() => {
     void fetchList();
-  }, [fetchList]);
+  }, [fetchList, contractsReady]);
 
   React.useEffect(() => {
     if (selectedId) {
@@ -100,41 +169,55 @@ export default function PullRequestsPage(): React.ReactNode {
 
   const handleStatusChange = React.useCallback(
     async (status: PullRequestStatus) => {
-      if (!clientRef.current || !detail) {
+      if (!contractsRef.current || !detail) {
         return;
       }
       setLoadingDetail(true);
       try {
-        const response = await clientRef.current.updatePullRequestStatus(projectId, detail.id, status);
-        setDetail(response);
-        setItems((prev) => sortPullRequests(prev.map((item) => (item.id === response.id ? response : item))));
+        const result = await invokeDashboardTool({ pull_request_id: detail.id, action: "update_status", status });
+        if (result.pull_requests) {
+          setItems(sortPullRequests(result.pull_requests));
+        }
+        setDetail(result.detail ?? detail);
+        setAuditEvents(result.audit_events ?? auditEvents);
+        setDashboardRationale(result.rationale ?? dashboardRationale);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoadingDetail(false);
       }
     },
-    [detail, projectId],
+    [auditEvents, dashboardRationale, detail, invokeDashboardTool],
   );
 
   const handleSendMessage = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!clientRef.current || !detail || !draft.content.trim()) {
+      if (!contractsRef.current || !detail || !draft.content.trim()) {
         return;
       }
       setDraft((prev) => ({ ...prev, sending: true }));
       try {
-        const response = await clientRef.current.postPullRequestMessage(projectId, detail.id, draft.content.trim(), "user");
-        const nextConversation: PullRequestMessage[] = [...extractConversation(detail), response];
-        setDetail({ ...detail, metadata: { ...detail.metadata, conversation: nextConversation } });
+        const result = await invokeDashboardTool({
+          pull_request_id: detail.id,
+          action: "post_message",
+          message: draft.content.trim(),
+        });
+        if (result.detail) {
+          setDetail(result.detail);
+        }
+        if (result.pull_requests) {
+          setItems(sortPullRequests(result.pull_requests));
+        }
+        setAuditEvents(result.audit_events ?? auditEvents);
+        setDashboardRationale(result.rationale ?? dashboardRationale);
         setDraft({ content: "", sending: false });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setDraft((prev) => ({ ...prev, sending: false }));
       }
     },
-    [detail, draft.content, projectId],
+    [auditEvents, dashboardRationale, detail, draft.content, invokeDashboardTool],
   );
 
   const conversation = React.useMemo(() => (detail ? extractConversation(detail) : []), [detail]);
@@ -149,6 +232,7 @@ export default function PullRequestsPage(): React.ReactNode {
             Each PR originates from the onboarding assistant or MCP runs. Track status, review conversation history, and reply
             with additional guidance.
           </p>
+          {dashboardRationale ? <p className="mt-2 text-xs text-slate-500">{dashboardRationale}</p> : null}
         </div>
         <button
           type="button"
@@ -258,6 +342,14 @@ export default function PullRequestsPage(): React.ReactNode {
                     ))
                   )}
                 </div>
+                {auditEvents.length > 0 ? (
+                  <details className="mx-4 mb-3 rounded border border-slate-800/60 bg-slate-950/60 p-3 text-xs text-slate-400">
+                    <summary className="cursor-pointer text-slate-300">Audit events ({auditEvents.length})</summary>
+                    <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] text-slate-400">
+                      {JSON.stringify(auditEvents, null, 2)}
+                    </pre>
+                  </details>
+                ) : null}
                 <form onSubmit={handleSendMessage} className="border-t border-slate-800/60 p-3">
                   <label htmlFor="pr-reply" className="sr-only">
                     Reply to pull request

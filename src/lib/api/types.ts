@@ -61,6 +61,7 @@ export interface Artifact {
 export interface ToolDescription {
   name: string;
   description?: string;
+  summary?: string;
   schema?: Record<string, unknown>;
   enabled: boolean;
 }
@@ -146,4 +147,35 @@ export interface PullRequestMessage {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: string;
+}
+
+export interface ToolAttachmentPayload {
+  name: string;
+  data: string;
+  mime_type: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolInvocationRequest<TInput = unknown> {
+  input?: TInput;
+  projectId?: string;
+  traceId?: string;
+  attachments?: ToolAttachmentPayload[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolInvocationResponse<TResult = unknown> {
+  tool: string;
+  result: TResult;
+  rationale?: string;
+  traceId?: string;
+  metadata?: Record<string, unknown>;
+  artifacts?: Artifact[];
+  events?: RunStreamEvent[];
+}
+
+export interface ToolInvocationErrorPayload {
+  code: string;
+  message: string;
+  details?: unknown;
 }

@@ -17,6 +17,8 @@ interface StackStepProps {
   onLockTemplates: () => void;
   disabled?: boolean;
   lockDisabled?: boolean;
+  onSelectAllTemplates?: () => void;
+  rationale?: string | null;
 }
 
 export function StackStep({
@@ -31,6 +33,8 @@ export function StackStep({
   onLockTemplates,
   disabled = false,
   lockDisabled = false,
+  onSelectAllTemplates,
+  rationale,
 }: StackStepProps): React.ReactNode {
   return (
     <div className="space-y-6">
@@ -49,6 +53,7 @@ export function StackStep({
           onPreview={onPreviewStack}
           disabled={disabled}
         />
+        {rationale ? <p className="text-xs text-slate-500">{rationale}</p> : null}
       </section>
       <section className="space-y-3">
         <header>
@@ -56,6 +61,16 @@ export function StackStep({
           <p className="mt-1 text-sm text-slate-400">
             Toggle templates to include in <code className="rounded bg-slate-900 px-1 py-0.5 text-xs">templates.lock.json</code>.
           </p>
+          {onSelectAllTemplates ? (
+            <button
+              type="button"
+              onClick={onSelectAllTemplates}
+              className="mt-2 inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+              disabled={disabled}
+            >
+              Select all templates
+            </button>
+          ) : null}
         </header>
         <TemplateSelect
           templates={templates}
