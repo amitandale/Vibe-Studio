@@ -1,6 +1,23 @@
 "use client";
 
-import { Run, RunCreateRequest, RunStreamEvent, ToolDescription, Artifact } from "./types";
+import {
+  Run,
+  RunCreateRequest,
+  RunStreamEvent,
+  ToolDescription,
+  Artifact,
+  ProviderDescriptor,
+  ProviderTokenRecord,
+  TokenValidationRequest,
+  TokenValidationResult,
+  StoreTokenRequest,
+  BusinessLogicRecommendation,
+  UiTemplateRecommendation,
+  PullRequestSummary,
+  PullRequestDetail,
+  PullRequestStatus,
+  PullRequestMessage,
+} from "./types";
 
 type FetchInit = RequestInit & { retryDelays?: number[]; traceId?: string; query?: Record<string, string> };
 
@@ -52,6 +69,127 @@ export class AgentMcpClient {
       ...rest,
     });
   }
+
+  async listTokenProviders(init?: FetchInit): Promise<ProviderDescriptor[]> {
+    return this.request<ProviderDescriptor[]>("/v1/providers", {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async listProjectTokens(projectId: string, init?: FetchInit): Promise<ProviderTokenRecord[]> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/tokens`;
+    return this.request<ProviderTokenRecord[]>(path, {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async validateProviderToken(requestBody: TokenValidationRequest, init?: FetchInit): Promise<TokenValidationResult> {
+    const projectId = requestBody.projectId ?? "default";
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/tokens/validate`;
+    return this.request<TokenValidationResult>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ provider_id: requestBody.providerId, token: requestBody.token }),
+      ...init,
+    });
+  }
+
+  async storeProviderToken(requestBody: StoreTokenRequest, init?: FetchInit): Promise<ProviderTokenRecord> {
+    const projectId = requestBody.projectId ?? "default";
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/tokens`;
+    return this.request<ProviderTokenRecord>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider_id: requestBody.providerId,
+        token: requestBody.token,
+        label: requestBody.label,
+      }),
+      ...init,
+    });
+  }
+
+  async deleteProviderToken(tokenId: string, projectId: string, init?: FetchInit): Promise<void> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/tokens/${encodeURIComponent(tokenId)}`;
+    await this.request<void>(path, {
+      method: "DELETE",
+      ...init,
+    });
+  }
+
+  async listBusinessLogic(projectId: string, init?: FetchInit): Promise<BusinessLogicRecommendation[]> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/business-logic`;
+    return this.request<BusinessLogicRecommendation[]>(path, {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async listUiTemplates(projectId: string, init?: FetchInit): Promise<UiTemplateRecommendation[]> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/ui-templates`;
+    return this.request<UiTemplateRecommendation[]>(path, {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async listPullRequests(projectId: string, init?: FetchInit): Promise<PullRequestSummary[]> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/prs`;
+    return this.request<PullRequestSummary[]>(path, {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async fetchPullRequest(projectId: string, prId: string, init?: FetchInit): Promise<PullRequestDetail> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/prs/${encodeURIComponent(prId)}`;
+    return this.request<PullRequestDetail>(path, {
+      method: "GET",
+      ...init,
+    });
+  }
+
+  async updatePullRequestStatus(
+    projectId: string,
+    prId: string,
+    status: PullRequestStatus,
+    init?: FetchInit,
+  ): Promise<PullRequestDetail> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/prs/${encodeURIComponent(prId)}`;
+    return this.request<PullRequestDetail>(path, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status }),
+      ...init,
+    });
+  }
+
+  async postPullRequestMessage(
+    projectId: string,
+    prId: string,
+    content: string,
+    role: PullRequestMessage["role"],
+    init?: FetchInit,
+  ): Promise<PullRequestMessage> {
+    const path = `/v1/projects/${encodeURIComponent(projectId)}/prs/${encodeURIComponent(prId)}/messages`;
+    return this.request<PullRequestMessage>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content, role }),
+      ...init,
+    });
+  }
+
 
   async listTools(init?: FetchInit): Promise<ToolDescription[]> {
     const query = init?.query ? new URLSearchParams(init.query).toString() : "";
