@@ -179,3 +179,71 @@ export interface ToolInvocationErrorPayload {
   message: string;
   details?: unknown;
 }
+
+export interface WorkflowInvocationRequest<TInput = unknown> {
+  workflowId: string;
+  input: TInput;
+  projectId?: string;
+  traceId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowInvocationResponse<TOutput = unknown> {
+  workflowId: string;
+  runId: string;
+  output?: TOutput;
+  status: RunStatus;
+  traceId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type VendorType = "codex" | "claude" | "grok" | "antigravity" | "kimi" | "qwen";
+
+export interface PRImplementationRequest {
+  pr_title: string;
+  pr_text: string;
+  repo_url: string;
+  working_branch: string;
+  vendor: VendorType;
+}
+
+export interface PRImplementationOutput {
+  checkout: {
+    workspace_path: string;
+    branch: string;
+    checkout_log: string[];
+  };
+  implementation: {
+    vendor: VendorType;
+    instruction: string;
+    streamed_output: string[];
+    exit_code?: number;
+    success: boolean;
+    files_changed: string[];
+    created: string[];
+    deleted: string[];
+    diff_preview?: string;
+  };
+  commit: {
+    branch_name: string;
+    commit_message: string;
+    commit_sha?: string;
+    pushed: boolean;
+  };
+  pull_request: {
+    pr_number?: number;
+    pr_url?: string;
+    draft: boolean;
+  };
+  ci_status: {
+    status: string;
+    logs: string[];
+    errors: string[];
+  };
+  diff: {
+    files: Record<string, { added: number; deleted: number }>;
+    full_diff?: string;
+  };
+  fix_attempts: string[];
+  success: boolean;
+}
