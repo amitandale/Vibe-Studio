@@ -19,6 +19,10 @@ import {
   PullRequestMessage,
   ToolInvocationRequest,
   ToolInvocationResponse,
+  WorkflowInvocationRequest,
+  WorkflowInvocationResponse,
+  PRImplementationRequest,
+  PRImplementationOutput,
 } from "./types";
 
 type FetchInit = RequestInit & { retryDelays?: number[]; traceId?: string; query?: Record<string, string> };
@@ -243,6 +247,55 @@ export class AgentMcpClient {
       body: JSON.stringify(body),
       ...init,
     });
+  }
+
+  async invokeWorkflow<TOutput = unknown, TInput = unknown>(
+    workflowId: string,
+    request: WorkflowInvocationRequest<TInput>,
+    init?: FetchInit,
+  ): Promise<WorkflowInvocationResponse<TOutput>> {
+    const path = `/v1/workflows/${encodeURIComponent(workflowId)}/invoke`;
+    const body: Record<string, unknown> = {
+      input: request.input,
+    };
+    if (request.projectId) {
+      body.project_id = request.projectId;
+    }
+    if (request.traceId) {
+      body.trace_id = request.traceId;
+    }
+    if (request.metadata) {
+      body.metadata = request.metadata;
+    }
+    return this.request<WorkflowInvocationResponse<TOutput>>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      ...init,
+    });
+  }
+
+  async invokePRImplementationWorkflow(
+    input: PRImplementationRequest,
+    options?: { projectId?: string; traceId?: string },
+    init?: FetchInit,
+  ): Promise<WorkflowInvocationResponse<PRImplementationOutput>> {
+    return this.invokeWorkflow<PRImplementationOutput, PRImplementationRequest>(
+      "implementation_workflow_v1",
+      {
+        workflowId: "implementation_workflow_v1",
+        input,
+        projectId: options?.projectId,
+        traceId: options?.traceId,
+      },
+      init,
+    );
+  }
+
+  streamWorkflow(_workflowId: string, runId: string, options: StreamOptions): () => void {
+    return this.streamRun(runId, options);
   }
 
   streamRun(runId: string, options: StreamOptions): () => void {
