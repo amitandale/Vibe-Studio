@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PRImplementationForm } from "@/components/workflow/PRImplementationForm";
 import { WorkflowProgressLog } from "@/components/workflow/WorkflowProgressLog";
 import { AgentMcpClient } from "@/lib/api/client";
@@ -12,8 +12,14 @@ export default function ImplementationWorkflowPage() {
   const [progress, setProgress] = useState<WorkflowProgress[]>([]);
   const [result, setResult] = useState<PRImplementationOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const streamTeardownRef = useRef<(() => void) | null>(null);
 
   const handleSubmit = async (request: PRImplementationRequest) => {
+    if (streamTeardownRef.current) {
+      streamTeardownRef.current();
+      streamTeardownRef.current = null;
+    }
+
     setIsRunning(true);
     setProgress([]);
     setResult(null);
@@ -33,23 +39,33 @@ export default function ImplementationWorkflowPage() {
           onComplete: (output) => {
             setResult(output ?? null);
             setIsRunning(false);
+            streamTeardownRef.current?.();
+            streamTeardownRef.current = null;
           },
           onError: (err) => {
             setError(err.message);
             setIsRunning(false);
+            streamTeardownRef.current?.();
+            streamTeardownRef.current = null;
           },
         },
         {
           projectId: process.env.NEXT_PUBLIC_PROJECT_ID,
         },
       );
-
-      void teardown;
+      streamTeardownRef.current = teardown;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setIsRunning(false);
     }
   };
+
+  useEffect(
+    () => () => {
+      streamTeardownRef.current?.();
+    },
+    [],
+  );
 
   return (
     <div className="container mx-auto p-6">
