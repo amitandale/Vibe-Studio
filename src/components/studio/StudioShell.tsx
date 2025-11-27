@@ -118,6 +118,9 @@ export function StudioShell({ children }: StudioShellProps): React.ReactNode {
           case "a":
             router.push("/artifacts");
             break;
+          case "h":
+            router.push("/settings/system");
+            break;
           case "d":
             router.push("/");
             break;
