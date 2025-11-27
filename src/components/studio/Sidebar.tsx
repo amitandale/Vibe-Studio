@@ -19,6 +19,7 @@ const NAV_ITEMS: BaseNavItem[] = [
   { href: "/runs", label: "Runs", shortcut: "g r" },
   { href: "/artifacts", label: "Artifacts", shortcut: "g a" },
   { href: "/settings", label: "Settings", shortcut: "g ?" },
+  { href: "/settings/system", label: "System Health", shortcut: "g h" },
 ];
 
 export type NavItem = BaseNavItem;

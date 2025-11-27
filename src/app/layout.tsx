@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import React from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { MCPProvider } from "@/components/providers/MCPProvider";
 
 export const metadata: Metadata = {
   title: "Vibe-Studio",
@@ -36,7 +37,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="bg-slate-950 text-slate-100">
-        <NuqsAdapter>{children}</NuqsAdapter>
+        <NuqsAdapter>
+          <MCPProvider>{children}</MCPProvider>
+        </NuqsAdapter>
       </body>
     </html>
   );
