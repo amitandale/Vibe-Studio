@@ -1,0 +1,68 @@
+name: Notify Vibe-System on Push
+
+on:
+  push:
+    branches:
+      - main
+      - work
+      - 'codex/**'
+
+jobs:
+  notify-vibe-system:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract branch info
+        id: branch
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "Detected branch: ${BRANCH_NAME}"
+          
+      - name: Extract commit information
+        id: commit
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+          AUTHOR="${{ github.event.head_commit.author.username }}"
+          
+          echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+          echo "commit_message=${COMMIT_MESSAGE}" >> $GITHUB_OUTPUT
+          echo "author=${AUTHOR}" >> $GITHUB_OUTPUT
+          
+      - name: Dispatch to Vibe-System
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.VIBE_GITHUB_TOKEN }}
+          script: |
+            try {
+              const branch = '${{ steps.branch.outputs.branch_name }}';
+              const service = '${{ github.event.repository.name }}';
+              const commitSha = '${{ steps.commit.outputs.commit_sha }}';
+              const commitMessage = '${{ steps.commit.outputs.commit_message }}';
+              const author = '${{ steps.commit.outputs.author }}';
+              
+              console.log(`Notifying Vibe-System of changes:`);
+              console.log(`  Service: ${service}`);
+              console.log(`  Branch: ${branch}`);
+              console.log(`  Commit: ${commitSha.substring(0, 7)}`);
+              
+              await github.rest.repos.createDispatchEvent({
+                owner: 'amitandale',
+                repo: 'Vibe-System',
+                event_type: 'service_updated',
+                client_payload: {
+                  service: service,
+                  branch: branch,
+                  commit_sha: commitSha,
+                  commit_message: commitMessage,
+                  author: author,
+                  repository_url: '${{ github.server_url }}/${{ github.repository }}',
+                  pushed_at: new Date().toISOString()
+                }
+              });
+              
+              console.log('Successfully dispatched service_updated event to Vibe-System');
+            } catch (error) {
+              console.error('Failed to dispatch event:', error);
+              throw error;
+            }
